@@ -1,0 +1,15 @@
+{
+  "name": "@feriados/brasil",
+  "version": "1.0.0",
+  "description": "Cálculo de feriados nacionais brasileiros (fixos e móveis) e dias úteis bancários/CLT",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  }
+}
+

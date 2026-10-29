@@ -1,0 +1,2 @@
+ALTER TABLE `invoices` ADD `payment_transaction_id` text REFERENCES `transactions`(`id`) ON UPDATE cascade ON DELETE restrict;--> statement-breakpoint
+CREATE UNIQUE INDEX `invoices_payment_transaction_unique` ON `invoices` (`payment_transaction_id`);

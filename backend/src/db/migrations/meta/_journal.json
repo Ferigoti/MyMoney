@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793215655733,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793216020416,
+      "tag": "0001_invoice_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793216032932,
+      "tag": "0002_drop_invoice_is_paid",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793216390740,
+      "tag": "0003_invoice_payment_transaction",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793279024189,
+      "tag": "0004_category_monthly_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793282000000,
+      "tag": "0005_accounts_types_and_recurring",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793284800000,
+      "tag": "0006_recurring_schedule_rule",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793291000000,
+      "tag": "0007_recurring_card_subscriptions",
+      "breakpoints": true
+    }
+  ]
+}
