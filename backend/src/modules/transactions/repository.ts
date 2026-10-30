@@ -22,6 +22,7 @@ export function listTransactions(db: DbOrTx, filter: ListTransactionsQuery): Tra
     const cardInMonth = and(
       isNotNull(transactions.invoiceId),
       or(
+        like(invoices.dueDate, `${filter.month}-%`),
         eq(invoices.month, filter.month),
         and(isNull(transactions.installmentGroupId), like(transactions.date, `${filter.month}-%`)),
       ),

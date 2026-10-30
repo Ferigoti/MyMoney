@@ -127,6 +127,19 @@ export async function createAccount(payload: {
   return data.data;
 }
 
+export async function updateAccount(
+  id: string,
+  payload: {
+    name?: string;
+    type?: AccountType;
+    initialBalanceCents?: number;
+    currentBalanceCents?: number;
+  },
+): Promise<Account> {
+  const { data } = await api.put<ApiResponse<Account>>(`/accounts/${id}`, payload);
+  return data.data;
+}
+
 export async function deleteAccount(id: string): Promise<{ deletedId: string }> {
   const { data } = await api.delete<ApiResponse<{ deletedId: string }>>(`/accounts/${id}`);
   return data.data;

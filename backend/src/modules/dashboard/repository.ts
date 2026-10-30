@@ -14,6 +14,17 @@ const notInvoicePayment = sql`NOT EXISTS (
   WHERE ${invoices.paymentTransactionId} = ${transactions.id}
 )`;
 
+/**
+ * Exclui transferências internas entre contas das métricas de entradas/saídas gerais
+ * do mês, categorias e histórico de 6 meses (pois não são receita nem despesa geral,
+ * apenas movimentação entre contas). No cálculo de `balances` de cada conta,
+ * elas continuam sendo consideradas normalmente.
+ */
+const notAccountTransfer = sql`(
+  ${transactions.description} NOT LIKE '%(Saída → %)'
+  AND ${transactions.description} NOT LIKE '%(Entrada ← %)'
+)`;
+
 const isMovementAccount = sql`UPPER(${accounts.type}) IN ('CHECKING', 'CASH', 'OTHER')`;
 const isSavingsAccount = sql`UPPER(${accounts.type}) = 'SAVINGS'`;
 const isBenefitAccount = sql`UPPER(${accounts.type}) = 'BENEFIT'`;
@@ -162,11 +173,12 @@ export function queryMonthSummaryAggregate(db: DbOrTx, month: string): MonthSumm
         eq(accounts.isArchived, false),
         like(transactions.date, monthPrefix),
         notInvoicePayment,
+        notAccountTransfer,
       ),
     )
     .get();
 
-  // Faturas abertas com vencimento no mês (ou competência `month` caso o vencimento caia no próprio mês).
+  // Faturas de cartão cujo vencimento ocorre no mês selecionado (independente de estarem pagas ou abertas).
   const cardRow = db
     .select({
       total: sql<number>`coalesce(sum(
@@ -177,8 +189,7 @@ export function queryMonthSummaryAggregate(db: DbOrTx, month: string): MonthSumm
     .innerJoin(invoices, eq(transactions.invoiceId, invoices.id))
     .where(
       and(
-        ne(invoices.status, 'PAID'),
-        or(like(invoices.dueDate, monthPrefix), eq(invoices.month, month)),
+        like(invoices.dueDate, monthPrefix),
       ),
     )
     .get();
@@ -201,7 +212,8 @@ export interface CategoryExpenseRow {
 /**
  * Agrupa via SQL (`GROUP BY category_id`) todas as despesas da competência `month`
  * (despesas em conta com `date LIKE 'YYYY-MM-%'` + compras no cartão cuja fatura
- * tem competência `month`), ordenando do maior para o menor valor.
+ * vence em `month`), ordenando do maior para o menor valor.
+ * Fica 100% alinhado com o valor de Saídas do Mês dos cards principais.
  */
 export function queryExpensesByCategory(db: DbOrTx, month: string): CategoryExpenseRow[] {
   const monthPrefix = `${month}-%`;
@@ -216,14 +228,16 @@ export function queryExpensesByCategory(db: DbOrTx, month: string): CategoryExpe
     })
     .from(transactions)
     .leftJoin(invoices, eq(transactions.invoiceId, invoices.id))
+    .leftJoin(accounts, eq(transactions.accountId, accounts.id))
     .leftJoin(categories, eq(transactions.categoryId, categories.id))
     .where(
       and(
         eq(transactions.type, 'expense'),
         notInvoicePayment,
+        notAccountTransfer,
         or(
-          and(isNull(transactions.invoiceId), like(transactions.date, monthPrefix)),
-          and(isNotNull(transactions.invoiceId), eq(invoices.month, month)),
+          and(isNull(transactions.invoiceId), like(transactions.date, monthPrefix), isMovementTx),
+          and(isNotNull(transactions.invoiceId), like(invoices.dueDate, monthPrefix)),
         ),
       ),
     )
@@ -249,14 +263,14 @@ export interface MonthHistoryRow {
  * Agrega em uma única query SQL (`GROUP BY effective_month`) as receitas e despesas
  * do intervalo `[startMonth, endMonth]` (formato `YYYY-MM`).
  * Para transações em conta, o mês efetivo é `substr(date, 1, 7)`;
- * para compras de cartão, é a competência da fatura (`invoices.month`).
+ * para compras de cartão, é o mês de vencimento da fatura (`substr(invoices.dueDate, 1, 7)`).
  */
 export function queryHistoryByMonthRange(
   db: DbOrTx,
   startMonth: string,
   endMonth: string,
 ): Map<string, MonthHistoryRow> {
-  const effectiveMonth = sql<string>` coalesce(${invoices.month}, substr(${transactions.date}, 1, 7))`;
+  const effectiveMonth = sql<string>`coalesce(substr(${invoices.dueDate}, 1, 7), substr(${transactions.date}, 1, 7))`;
 
   const rows = db
     .select({
@@ -266,9 +280,16 @@ export function queryHistoryByMonthRange(
     })
     .from(transactions)
     .leftJoin(invoices, eq(transactions.invoiceId, invoices.id))
+    .leftJoin(accounts, eq(transactions.accountId, accounts.id))
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
     .where(
       and(
         notInvoicePayment,
+        notAccountTransfer,
+        or(
+          and(isNull(transactions.invoiceId), isMovementTx),
+          isNotNull(transactions.invoiceId),
+        ),
         gte(effectiveMonth, startMonth),
         lte(effectiveMonth, endMonth),
       ),
@@ -288,3 +309,77 @@ export function queryHistoryByMonthRange(
   );
 }
 
+export interface PlanningRawRow {
+  /** Competência efetiva do lançamento (`YYYY-MM`). */
+  month: string;
+  type: 'income' | 'expense';
+  amountCents: number;
+  isCard: boolean;
+  isBenefit: boolean;
+  isRecurring: boolean;
+  isInstallment: boolean;
+  categoryId: string | null;
+  categoryName: string;
+  monthlyBudgetCents: number;
+}
+
+/**
+ * Busca os lançamentos que compõem o Planejamento Mensal das competências informadas,
+ * já com a competência efetiva resolvida via SQL:
+ * - lançamentos em conta: mês da data (`substr(date, 1, 7)`);
+ * - compras no cartão: mês de VENCIMENTO da fatura (quando o dinheiro realmente sai),
+ *   independentemente de a fatura já estar paga.
+ * Exclui pagamentos de fatura (para não duplicar com as compras do cartão),
+ * transferências entre contas e contas arquivadas.
+ */
+export function queryPlanningRows(db: DbOrTx, months: readonly string[]): PlanningRawRow[] {
+  if (months.length === 0) return [];
+  const monthList = sql.join(
+    months.map((m) => sql`${m}`),
+    sql`, `,
+  );
+  const effectiveMonth = sql<string>`case
+    when ${transactions.invoiceId} is not null then substr(${invoices.dueDate}, 1, 7)
+    else substr(${transactions.date}, 1, 7)
+  end`;
+
+  const rows = db
+    .select({
+      month: effectiveMonth,
+      type: transactions.type,
+      amountCents: transactions.amountCents,
+      isCard: sql<number>`case when ${transactions.invoiceId} is not null then 1 else 0 end`,
+      isBenefit: sql<number>`case when ${transactions.invoiceId} is null and ${isBenefitTx} then 1 else 0 end`,
+      isRecurring: sql<number>`case when ${transactions.recurringId} is not null then 1 else 0 end`,
+      isInstallment: sql<number>`case when ${transactions.installmentGroupId} is not null then 1 else 0 end`,
+      categoryId: transactions.categoryId,
+      categoryName: sql<string>`coalesce(${categories.name}, 'Sem categoria')`,
+      monthlyBudgetCents: sql<number>`coalesce(${categories.monthlyBudgetCents}, 0)`,
+    })
+    .from(transactions)
+    .leftJoin(invoices, eq(transactions.invoiceId, invoices.id))
+    .leftJoin(accounts, eq(transactions.accountId, accounts.id))
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .where(
+      and(
+        notInvoicePayment,
+        notAccountTransfer,
+        or(isNotNull(transactions.invoiceId), eq(accounts.isArchived, false)),
+        sql`${effectiveMonth} in (${monthList})`,
+      ),
+    )
+    .all();
+
+  return rows.map((r) => ({
+    month: r.month,
+    type: r.type,
+    amountCents: Number(r.amountCents),
+    isCard: Number(r.isCard) === 1,
+    isBenefit: Number(r.isBenefit) === 1,
+    isRecurring: Number(r.isRecurring) === 1,
+    isInstallment: Number(r.isInstallment) === 1,
+    categoryId: r.categoryId,
+    categoryName: r.categoryName,
+    monthlyBudgetCents: Number(r.monthlyBudgetCents),
+  }));
+}

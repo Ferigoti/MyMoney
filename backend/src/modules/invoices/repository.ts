@@ -14,6 +14,14 @@ export function findInvoiceByCardAndMonth(db: DbOrTx, cardId: string, month: str
     .get();
 }
 
+export function findInvoiceByCardAndDueMonth(db: DbOrTx, cardId: string, month: string): Invoice | undefined {
+  return db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.cardId, cardId), sql`${invoices.dueDate} LIKE ${month + '-%'}`))
+    .get();
+}
+
 export function findInvoiceByPaymentTransactionId(db: DbOrTx, transactionId: string): Invoice | undefined {
   return db.select().from(invoices).where(eq(invoices.paymentTransactionId, transactionId)).get();
 }

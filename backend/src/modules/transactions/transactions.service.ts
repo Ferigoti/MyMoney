@@ -362,16 +362,18 @@ export function createTransactionsService(db: DB) {
           ...(input.isPaid !== undefined ? { isPaid: input.isPaid } : {}),
         });
 
-        // Se for uma parcela de cartão (installmentGroupId !== null), propaga descrição, valor, data e categoria
+        // Se for uma parcela de cartão (installmentGroupId !== null), propaga descrição, valor, dia da data e categoria
         // para todas as demais parcelas em faturas ainda não pagas (todos os meses).
         if (current.installmentGroupId !== null) {
+          const nextDay = input.date !== undefined ? parseIsoDate(input.date).day : undefined;
           const unpaidInstallments = listUnpaidByInstallmentGroup(tx, current.installmentGroupId);
           for (const sibling of unpaidInstallments) {
             if (sibling.id === id) continue;
+            const siblingMonth = sibling.date.slice(0, 7);
             updateTransactionById(tx, sibling.id, {
               ...(input.description !== undefined ? { description: input.description } : {}),
               ...(nextAmountCents !== undefined ? { amountCents: nextAmountCents } : {}),
-              ...(input.date !== undefined ? { date: input.date } : {}),
+              ...(nextDay !== undefined ? { date: dateInMonth(siblingMonth, nextDay) } : {}),
               ...(hasCategoryUpdate ? { categoryId: nextCategoryId ?? null } : {}),
             });
           }

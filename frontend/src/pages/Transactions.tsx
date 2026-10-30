@@ -3,6 +3,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowDownRight,
+  ArrowLeftRight,
   ArrowUpRight,
   Calendar,
   CheckCircle2,
@@ -24,10 +25,12 @@ import {
 import type { Account, Category, DeleteScope, Transaction } from '../types';
 import {
   centsToInput,
+  consolidateTransferTransactions,
   formatCurrency,
   formatIsoDate,
   formatMonthLabel,
   getTodayIsoDate,
+  type ConsolidatedTransferFields,
 } from '../utils/formatters';
 
 export interface TransactionsProps {
@@ -39,8 +42,9 @@ export interface TransactionsProps {
   onRefreshAll: () => Promise<void> | void;
 }
 
-type TypeFilter = 'all' | 'income' | 'expense' | 'recurring';
+type TypeFilter = 'all' | 'income' | 'expense' | 'transfer' | 'recurring';
 type StatusFilter = 'all' | 'paid' | 'pending' | 'future';
+type DisplayTransaction = Transaction & ConsolidatedTransferFields;
 
 function digitsToCents(raw: string): number {
   const digits = raw.replace(/\D/g, '');
@@ -84,7 +88,7 @@ export function Transactions({
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Estado do Modal de Edição (PUT /transactions/:id)
-  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+  const [editingTx, setEditingTx] = useState<DisplayTransaction | null>(null);
   const [editDescription, setEditDescription] = useState<string>('');
   const [editAmountCents, setEditAmountCents] = useState<number>(0);
   const [editDate, setEditDate] = useState<string>('');
@@ -95,7 +99,7 @@ export function Transactions({
   const [editError, setEditError] = useState<string | null>(null);
 
   // Estado do Diálogo de Exclusão (DELETE /transactions/:id?scope=single|future)
-  const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
+  const [deletingTx, setDeletingTx] = useState<DisplayTransaction | null>(null);
   const [deletingScope, setDeletingScope] = useState<DeleteScope | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -103,7 +107,7 @@ export function Transactions({
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   // Une as transações em conta do mês selecionado com os lançamentos futuros (recorrências e agendados)
-  // Exclui compras de cartão de crédito (que aparecem apenas em Cartões & Faturas)
+  // Exclui compras de cartão de crédito (que aparecem apenas em Cartões & Faturas) e consolida pares de transferência entre contas
   const allTransactions = useMemo(() => {
     const seen = new Set<string>();
     const combined: Transaction[] = [];
@@ -114,28 +118,38 @@ export function Transactions({
         combined.push(tx);
       }
     }
-    return combined.sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions, futureTransactions]);
+    const sorted = combined.sort((a, b) => b.date.localeCompare(a.date));
+    return consolidateTransferTransactions(sorted, accountsMap);
+  }, [transactions, futureTransactions, accountsMap]);
 
   const filteredTransactions = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
 
     return allTransactions.filter((tx) => {
-      if (query && !tx.description.toLowerCase().includes(query)) {
-        return false;
+      if (query) {
+        const matchesDesc = tx.description.toLowerCase().includes(query);
+        const matchesCleanDesc = tx.transferCleanDescription?.toLowerCase().includes(query);
+        const matchesOrigin = tx.transferOriginAccountName?.toLowerCase().includes(query);
+        const matchesDest = tx.transferDestinationAccountName?.toLowerCase().includes(query);
+        if (!matchesDesc && !matchesCleanDesc && !matchesOrigin && !matchesDest) {
+          return false;
+        }
       }
 
-      if (typeFilter === 'income' && tx.type !== 'income') {
+      if (typeFilter === 'income' && (tx.type !== 'income' || tx.isTransfer)) {
         return false;
       }
-      if (typeFilter === 'expense' && tx.type !== 'expense') {
+      if (typeFilter === 'expense' && (tx.type !== 'expense' || tx.isTransfer)) {
+        return false;
+      }
+      if (typeFilter === 'transfer' && !tx.isTransfer) {
         return false;
       }
       if (typeFilter === 'recurring' && !tx.recurringId) {
         return false;
       }
 
-      if (categoryFilter === 'uncategorized' && tx.categoryId !== null) {
+      if (categoryFilter === 'uncategorized' && (tx.categoryId !== null || tx.isTransfer)) {
         return false;
       }
       if (
@@ -149,7 +163,6 @@ export function Transactions({
       const isFutureTx = (tx.date > todayIso || !tx.date.startsWith(selectedMonth)) && !tx.isPaid;
 
       if (statusFilter === 'paid') {
-        // Para transações de conta verifica isPaid; para cartão considera pendente até a fatura ser quitada
         if (tx.invoiceId !== null || !tx.isPaid) return false;
       }
       if (statusFilter === 'pending') {
@@ -168,11 +181,11 @@ export function Transactions({
     return categories.filter((c) => c.kind === editingTx.type);
   }, [categories, editingTx]);
 
-  const handleOpenEdit = (tx: Transaction) => {
+  const handleOpenEdit = (tx: DisplayTransaction) => {
     setEditError(null);
     setFeedback(null);
     setEditingTx(tx);
-    setEditDescription(tx.description);
+    setEditDescription(tx.isTransfer ? (tx.transferCleanDescription ?? tx.description) : tx.description);
     setEditAmountCents(tx.amountCents);
     setEditDate(tx.date);
     setEditCategoryId(tx.categoryId ?? '');
@@ -197,14 +210,42 @@ export function Transactions({
     setSavingEdit(true);
     setEditError(null);
     try {
-      await updateTransaction(editingTx.id, {
-        description: trimmedDesc,
-        amountCents: editAmountCents,
-        date: editDate,
-        categoryId: editCategoryId ? editCategoryId : null,
-        ...(editingTx.invoiceId === null ? { isPaid: editIsPaid } : {}),
-        ...(editingTx.recurringId ? { updateRecurring: editUpdateRecurring } : {}),
-      });
+      if (editingTx.isTransfer) {
+        const originName = editingTx.transferOriginAccountName ?? 'Origem';
+        const destName = editingTx.transferDestinationAccountName ?? 'Destino';
+        const primaryDesc =
+          editingTx.transferDirection === 'in'
+            ? `${trimmedDesc} (Entrada ← ${originName})`
+            : `${trimmedDesc} (Saída → ${destName})`;
+
+        await updateTransaction(editingTx.id, {
+          description: primaryDesc,
+          amountCents: editAmountCents,
+          date: editDate,
+          categoryId: null,
+          isPaid: editIsPaid,
+        });
+
+        if (editingTx.pairedTransactionId) {
+          const pairedDesc = `${trimmedDesc} (Entrada ← ${originName})`;
+          await updateTransaction(editingTx.pairedTransactionId, {
+            description: pairedDesc,
+            amountCents: editAmountCents,
+            date: editDate,
+            categoryId: null,
+            isPaid: editIsPaid,
+          });
+        }
+      } else {
+        await updateTransaction(editingTx.id, {
+          description: trimmedDesc,
+          amountCents: editAmountCents,
+          date: editDate,
+          categoryId: editCategoryId ? editCategoryId : null,
+          ...(editingTx.invoiceId === null ? { isPaid: editIsPaid } : {}),
+          ...(editingTx.recurringId ? { updateRecurring: editUpdateRecurring } : {}),
+        });
+      }
       setEditingTx(null);
       setFeedback({ type: 'success', message: 'Lançamento atualizado com sucesso.' });
       await Promise.resolve(onRefreshAll());
@@ -215,7 +256,7 @@ export function Transactions({
     }
   };
 
-  const handleOpenDelete = (tx: Transaction) => {
+  const handleOpenDelete = (tx: DisplayTransaction) => {
     setDeleteError(null);
     setFeedback(null);
     setDeletingTx(tx);
@@ -227,11 +268,15 @@ export function Transactions({
     setDeleteError(null);
     try {
       const result = await deleteTransaction(deletingTx.id, scope);
+      if (deletingTx.isTransfer && deletingTx.pairedTransactionId) {
+        await deleteTransaction(deletingTx.pairedTransactionId, 'single');
+      }
       setDeletingTx(null);
       setFeedback({
         type: 'success',
-        message:
-          result.deletedCount > 1
+        message: deletingTx.isTransfer
+          ? 'Transferência entre contas excluída com sucesso.'
+          : result.deletedCount > 1
             ? `${result.deletedCount} parcelas foram excluídas com sucesso.`
             : 'Lançamento excluído com sucesso.',
       });
@@ -243,12 +288,15 @@ export function Transactions({
     }
   };
 
-  const handleTogglePaid = async (tx: Transaction) => {
+  const handleTogglePaid = async (tx: DisplayTransaction) => {
     if (tx.invoiceId !== null || togglingId) return;
     setTogglingId(tx.id);
     setFeedback(null);
     try {
       await toggleTransactionPaid(tx.id);
+      if (tx.isTransfer && tx.pairedTransactionId) {
+        await toggleTransactionPaid(tx.pairedTransactionId);
+      }
       await Promise.resolve(onRefreshAll());
     } catch (err) {
       setFeedback({ type: 'error', message: extractApiErrorMessage(err) });
@@ -339,6 +387,7 @@ export function Transactions({
               <option value="all">Todos os tipos</option>
               <option value="income">Receitas (Conta)</option>
               <option value="expense">Despesas / Débito / Pagamento Fatura</option>
+              <option value="transfer">Transferências entre Contas</option>
               <option value="recurring">Contas e Receitas Recorrentes</option>
             </select>
           </div>
@@ -397,8 +446,12 @@ export function Transactions({
                 const category = tx.categoryId ? categoriesMap.get(tx.categoryId) : undefined;
                 const account = tx.accountId ? accountsMap.get(tx.accountId) : undefined;
                 const isCardTx = tx.invoiceId !== null;
-                const isIncome = tx.type === 'income';
+                const isTransfer = Boolean(tx.isTransfer);
+                const isIncome = tx.type === 'income' && !isTransfer;
                 const isToggling = togglingId === tx.id;
+                const displayDescription = isTransfer
+                  ? (tx.transferCleanDescription ?? tx.description)
+                  : tx.description;
 
                 return (
                   <div key={tx.id} className="space-y-2.5 p-4">
@@ -411,27 +464,50 @@ export function Transactions({
                           >
                             <CreditCardIcon className="h-4 w-4" />
                           </span>
+                        ) : isTransfer ? (
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-700 ring-1 ring-sky-200/70"
+                            title="Transferência entre Contas"
+                          >
+                            <ArrowLeftRight className="h-4 w-4" />
+                          </span>
                         ) : (
                           <input
                             type="checkbox"
                             checked={tx.isPaid}
                             disabled={isToggling}
                             onChange={() => void handleTogglePaid(tx)}
-                            aria-label={`Alternar baixa de ${tx.description}`}
+                            aria-label={`Alternar baixa de ${displayDescription}`}
                             className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600 disabled:opacity-50"
                           />
                         )}
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900 break-words">
-                            {tx.description}
+                            {displayDescription}
                           </p>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
                             <span>{formatIsoDate(tx.date)}</span>
                             <span>•</span>
-                            <span>{category ? category.name : 'Sem categoria'}</span>
+                            <span>
+                              {isTransfer
+                                ? 'Transferência entre contas'
+                                : category
+                                  ? category.name
+                                  : 'Sem categoria'}
+                            </span>
                             <span>•</span>
                             <span>
-                              {isCardTx ? 'Cartão de Crédito' : account ? account.name : 'Conta'}
+                              {isTransfer ? (
+                                <strong className="font-semibold text-sky-700">
+                                  {tx.transferOriginAccountName} → {tx.transferDestinationAccountName}
+                                </strong>
+                              ) : isCardTx ? (
+                                'Cartão de Crédito'
+                              ) : account ? (
+                                account.name
+                              ) : (
+                                'Conta'
+                              )}
                             </span>
                           </div>
                         </div>
@@ -439,10 +515,14 @@ export function Transactions({
 
                       <span
                         className={`shrink-0 text-sm font-semibold tabular-nums ${
-                          isIncome ? 'text-emerald-700' : 'text-slate-900'
+                          isTransfer
+                            ? 'text-sky-700'
+                            : isIncome
+                              ? 'text-emerald-700'
+                              : 'text-slate-900'
                         }`}
                       >
-                        {isIncome ? '+ ' : '- '}
+                        {isTransfer ? '⇄ ' : isIncome ? '+ ' : '- '}
                         {formatCurrency(tx.amountCents)}
                       </span>
                     </div>
@@ -452,6 +532,11 @@ export function Transactions({
                         {isCardTx ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
                             Na fatura
+                          </span>
+                        ) : isTransfer ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200/70">
+                            <ArrowLeftRight className="h-3 w-3" />
+                            Entre Contas
                           </span>
                         ) : (
                           <button
@@ -509,7 +594,7 @@ export function Transactions({
                           type="button"
                           onClick={() => handleOpenEdit(tx)}
                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                          aria-label={`Editar ${tx.description}`}
+                          aria-label={`Editar ${displayDescription}`}
                         >
                           <Pencil className="h-3.5 w-3.5" />
                           Editar
@@ -518,7 +603,7 @@ export function Transactions({
                           type="button"
                           onClick={() => handleOpenDelete(tx)}
                           className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50/50 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
-                          aria-label={`Excluir ${tx.description}`}
+                          aria-label={`Excluir ${displayDescription}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                           Excluir
@@ -550,18 +635,26 @@ export function Transactions({
                     const category = tx.categoryId ? categoriesMap.get(tx.categoryId) : undefined;
                     const account = tx.accountId ? accountsMap.get(tx.accountId) : undefined;
                     const isCardTx = tx.invoiceId !== null;
-                    const isIncome = tx.type === 'income';
+                    const isTransfer = Boolean(tx.isTransfer);
+                    const isIncome = tx.type === 'income' && !isTransfer;
                     const isToggling = togglingId === tx.id;
+                    const displayDescription = isTransfer
+                      ? (tx.transferCleanDescription ?? tx.description)
+                      : tx.description;
 
                     return (
                       <tr key={tx.id} className="transition hover:bg-slate-50/80">
                         <td className="px-4 py-3.5 text-center">
-                          {isCardTx ? (
+                          {isCardTx || isTransfer ? (
                             <span
                               className="inline-block h-4 w-4 text-slate-300"
-                              title="Quitado via fatura do cartão"
+                              title={
+                                isTransfer
+                                  ? 'Transferência concluída entre contas'
+                                  : 'Quitado via fatura do cartão'
+                              }
                             >
-                              —
+                              {isTransfer ? '⇄' : '—'}
                             </span>
                           ) : (
                             <input
@@ -569,7 +662,7 @@ export function Transactions({
                               checked={tx.isPaid}
                               disabled={isToggling}
                               onChange={() => void handleTogglePaid(tx)}
-                              aria-label={`Alternar baixa de ${tx.description}`}
+                              aria-label={`Alternar baixa de ${displayDescription}`}
                               className="h-4 w-4 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-600 disabled:opacity-50"
                             />
                           )}
@@ -583,14 +676,18 @@ export function Transactions({
                           <div className="flex items-center gap-2.5">
                             <span
                               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
-                                isIncome
-                                  ? 'bg-emerald-50 text-emerald-700'
-                                  : isCardTx
-                                    ? 'bg-indigo-50 text-indigo-700'
-                                    : 'bg-slate-100 text-slate-700'
+                                isTransfer
+                                  ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/70'
+                                  : isIncome
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : isCardTx
+                                      ? 'bg-indigo-50 text-indigo-700'
+                                      : 'bg-slate-100 text-slate-700'
                               }`}
                             >
-                              {isIncome ? (
+                              {isTransfer ? (
+                                <ArrowLeftRight className="h-4 w-4" />
+                              ) : isIncome ? (
                                 <ArrowUpRight className="h-4 w-4" />
                               ) : (
                                 <ArrowDownRight className="h-4 w-4" />
@@ -598,7 +695,13 @@ export function Transactions({
                             </span>
                             <div>
                               <p className="font-medium text-slate-900">
-                                {tx.description}
+                                {displayDescription}
+                                {isTransfer && (
+                                  <span className="ml-2 inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200/70">
+                                    <ArrowLeftRight className="h-3 w-3" />
+                                    Transferência entre Contas
+                                  </span>
+                                )}
                                 {(tx.date > todayIso || !tx.date.startsWith(selectedMonth)) &&
                                   !tx.isPaid && (
                                     <span className="ml-2 inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200/70">
@@ -627,11 +730,25 @@ export function Transactions({
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3.5 text-xs text-slate-600">
-                          {category ? category.name : 'Sem categoria'}
+                          {isTransfer ? (
+                            <span className="font-medium text-sky-700">
+                              Transferência entre contas
+                            </span>
+                          ) : category ? (
+                            category.name
+                          ) : (
+                            'Sem categoria'
+                          )}
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3.5 text-xs text-slate-600">
-                          {isCardTx ? (
+                          {isTransfer ? (
+                            <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                              <span>{tx.transferOriginAccountName}</span>
+                              <span className="text-sky-600">→</span>
+                              <span>{tx.transferDestinationAccountName}</span>
+                            </span>
+                          ) : isCardTx ? (
                             <span className="inline-flex items-center gap-1 font-medium text-indigo-700">
                               <CreditCardIcon className="h-3.5 w-3.5" />
                               Cartão de Crédito
@@ -645,6 +762,11 @@ export function Transactions({
                           {isCardTx ? (
                             <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
                               Na fatura
+                            </span>
+                          ) : isTransfer ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 ring-1 ring-sky-200/70">
+                              <ArrowLeftRight className="h-3.5 w-3.5" />
+                              Transferido
                             </span>
                           ) : (
                             <button
@@ -673,11 +795,15 @@ export function Transactions({
                         </td>
 
                         <td
-                          className={`whitespace-nowrap px-4 py-3.5 text-right font-semibold ${
-                            isIncome ? 'text-emerald-700' : 'text-slate-900'
+                          className={`whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums ${
+                            isTransfer
+                              ? 'text-sky-700'
+                              : isIncome
+                                ? 'text-emerald-700'
+                                : 'text-slate-900'
                           }`}
                         >
-                          {isIncome ? '+ ' : '- '}
+                          {isTransfer ? '⇄ ' : isIncome ? '+ ' : '- '}
                           {formatCurrency(tx.amountCents)}
                         </td>
 
@@ -688,7 +814,7 @@ export function Transactions({
                               onClick={() => handleOpenEdit(tx)}
                               className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                               title="Editar lançamento"
-                              aria-label={`Editar ${tx.description}`}
+                              aria-label={`Editar ${displayDescription}`}
                             >
                               <Pencil className="h-4 w-4" />
                             </button>
@@ -697,7 +823,7 @@ export function Transactions({
                               onClick={() => handleOpenDelete(tx)}
                               className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
                               title="Excluir lançamento"
-                              aria-label={`Excluir ${tx.description}`}
+                              aria-label={`Excluir ${displayDescription}`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>

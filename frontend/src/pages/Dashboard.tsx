@@ -12,12 +12,10 @@ import {
   ListFilter,
   PiggyBank,
   Plus,
-  Receipt,
   RefreshCw,
   Repeat,
   Settings as SettingsIcon,
   Target,
-  TrendingUp,
   Wallet,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -264,19 +262,19 @@ export function Dashboard() {
       .slice(0, 12);
   }, [accountTransactions, upcomingFutureTransactions]);
 
+  const incomesCents = summary?.month_summary.incomes_cents ?? 0;
+  const benefitsIncomesCents = summary?.month_summary.benefits_incomes_cents ?? 0;
+  const expensesCents = summary?.month_summary.expenses_cents ?? 0;
+  const creditCardCents = summary?.month_summary.credit_card_cents ?? 0;
+  const totalExpensesCents =
+    summary?.month_summary.total_expenses_cents ?? expensesCents + creditCardCents;
+  const monthRemainingCents =
+    summary?.month_summary.free_to_spend_cents ?? incomesCents - totalExpensesCents;
+
   const currentBalance =
     summary?.balances.available_balance_cents ?? summary?.balances.current_balance_cents ?? 0;
-  const projectedBalance = summary?.balances.projected_balance_cents ?? 0;
   const savingsBalance = summary?.balances.savings_balance_cents ?? 0;
   const benefitsBalance = summary?.balances.benefits_balance_cents ?? 0;
-  const projectedBenefitsBalance =
-    summary?.balances.projected_benefits_balance_cents ?? benefitsBalance;
-  const expensesCents = summary?.month_summary.expenses_cents ?? 0;
-  const incomesCents = summary?.month_summary.incomes_cents ?? 0;
-  const creditCardCents = summary?.month_summary.credit_card_cents ?? 0;
-  // Livre para Gastar no Mês = estritamente sobre contas de movimentação (CHECKING/CASH)
-  const freeToSpendCents =
-    summary?.balances.free_to_spend_cents ?? incomesCents - (expensesCents + creditCardCents);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -468,158 +466,149 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Cards de Resumo (Alinhamento Vertical Uniforme) */}
+        {/* 3 Indicadores Principais da Competência (Visão Isolada do Mês) */}
         <section
-          aria-label="Indicadores financeiros do mês"
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5"
+          aria-label="Indicadores principais do mês"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4 lg:gap-5"
         >
-          {/* Card 1: Saldo Disponível (CHECKING / CASH) */}
-          <div className="flex h-full min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-2xs sm:p-5">
+          {/* Card 1: Entradas do Mês */}
+          <div className="flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs transition hover:border-emerald-300">
             <div>
-              <div className="flex min-h-9 items-start justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-slate-500 uppercase sm:text-xs">
-                  Saldo Disponível (Caixa)
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase sm:text-xs">
+                  1. Quanto vou receber
                 </span>
-                <div className="shrink-0 rounded-lg bg-slate-100 p-2 text-slate-700">
-                  <Wallet className="h-4 w-4" />
+                <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600 ring-1 ring-emerald-100">
+                  <ArrowDownRight className="h-5 w-5" />
                 </div>
               </div>
-              <p
-                className={`mt-2 text-xl font-bold tracking-tight tabular-nums sm:text-2xl ${
-                  currentBalance < 0 ? 'text-rose-600' : 'text-slate-900'
-                }`}
-              >
-                {loading && !summary ? '...' : formatCurrency(currentBalance)}
+              <h3 className="mt-1 text-sm font-medium text-slate-700">Entradas do Mês</h3>
+              <p className="mt-2 text-2xl font-bold tracking-tight text-emerald-600 tabular-nums sm:text-3xl">
+                {loading && !summary ? '...' : formatCurrency(incomesCents)}
               </p>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2.5 text-[11px]">
-              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-2 py-0.5 font-semibold text-sky-700">
-                Guardado/Reserva: {loading && !summary ? '...' : formatCurrency(savingsBalance)}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-800">
-                Vale: {loading && !summary ? '...' : formatCurrency(benefitsBalance)}
-              </span>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-3 text-xs text-slate-500">
+              <span>Salários e receitas no mês</span>
+              {benefitsIncomesCents > 0 && (
+                <span className="font-medium text-amber-700">
+                  + {formatCurrency(benefitsIncomesCents)} Vale
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Card 2: Saldo Previsto / Projetado */}
-          <div className="flex h-full min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-2xs sm:p-5">
+          {/* Card 2: Saídas do Mês */}
+          <div className="flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-2xs transition hover:border-rose-300">
             <div>
-              <div className="flex min-h-9 items-start justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-slate-500 uppercase sm:text-xs">
-                  Saldo Projetado
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase sm:text-xs">
+                  2. Quanto vou gastar
                 </span>
-                <div className="shrink-0 rounded-lg bg-emerald-50 p-2 text-emerald-700">
-                  <TrendingUp className="h-4 w-4" />
+                <div className="rounded-xl bg-rose-50 p-2.5 text-rose-600 ring-1 ring-rose-100">
+                  <ArrowUpRight className="h-5 w-5" />
                 </div>
               </div>
-              <p
-                className={`mt-2 text-xl font-bold tracking-tight tabular-nums sm:text-2xl ${
-                  projectedBalance < 0 ? 'text-rose-600' : 'text-slate-900'
-                }`}
-              >
-                {loading && !summary ? '...' : formatCurrency(projectedBalance)}
+              <h3 className="mt-1 text-sm font-medium text-slate-700">Saídas do Mês</h3>
+              <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900 tabular-nums sm:text-3xl">
+                {loading && !summary ? '...' : formatCurrency(totalExpensesCents)}
               </p>
             </div>
-            <div className="mt-3 space-y-0.5 border-t border-slate-100 pt-2.5 text-xs text-slate-500">
-              <p className="flex items-center justify-between gap-1">
-                <span>Receitas do mês:</span>
-                <span className="font-semibold text-emerald-700 tabular-nums">
-                  {formatCurrency(incomesCents)}
-                </span>
-              </p>
-              <p className="flex items-center justify-between gap-1">
-                <span>Vale projetado:</span>
-                <span className="font-semibold text-amber-700 tabular-nums">
-                  {loading && !summary ? '...' : formatCurrency(projectedBenefitsBalance)}
-                </span>
-              </p>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+              <span className="truncate">
+                Boletos ({formatCurrency(expensesCents)}) + Faturas ({formatCurrency(creditCardCents)})
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveView('cards')}
+                className="font-medium text-indigo-600 hover:text-indigo-800"
+              >
+                Faturas →
+              </button>
             </div>
           </div>
 
-          {/* Card 3: Livre para Gastar no Mês */}
-          <button
-            type="button"
-            onClick={() => setActiveView('budgets')}
-            className="flex h-full min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 text-left shadow-2xs transition hover:border-teal-300 sm:p-5"
+          {/* Card 3: Sobra do Mês */}
+          <div
+            className={`flex flex-col justify-between rounded-2xl border p-5 shadow-2xs transition ${
+              monthRemainingCents < 0
+                ? 'border-rose-200 bg-rose-50/30 hover:border-rose-300'
+                : 'border-slate-200/90 bg-white hover:border-teal-300'
+            }`}
           >
-            <div className="w-full">
-              <div className="flex min-h-9 items-start justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-slate-500 uppercase sm:text-xs">
-                  Livre para Gastar no Mês
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold tracking-wide text-slate-500 uppercase sm:text-xs">
+                  3. Quanto sobra no final
                 </span>
                 <div
-                  className={`shrink-0 rounded-lg p-2 ${
-                    freeToSpendCents < 0
-                      ? 'bg-rose-50 text-rose-700'
-                      : 'bg-teal-50 text-teal-700'
+                  className={`rounded-xl p-2.5 ring-1 ${
+                    monthRemainingCents < 0
+                      ? 'bg-rose-100 text-rose-700 ring-rose-200'
+                      : 'bg-teal-50 text-teal-700 ring-teal-100'
                   }`}
                 >
-                  <PiggyBank className="h-4 w-4" />
+                  <PiggyBank className="h-5 w-5" />
                 </div>
               </div>
+              <h3 className="mt-1 text-sm font-medium text-slate-700">Sobra do Mês</h3>
               <p
-                className={`mt-2 text-xl font-bold tracking-tight tabular-nums sm:text-2xl ${
-                  freeToSpendCents < 0 ? 'text-rose-600' : 'text-emerald-700'
+                className={`mt-2 text-2xl font-bold tracking-tight tabular-nums sm:text-3xl ${
+                  monthRemainingCents < 0 ? 'text-rose-600' : 'text-emerald-700'
                 }`}
               >
-                {loading && !summary ? '...' : formatCurrency(freeToSpendCents)}
+                {loading && !summary ? '...' : formatCurrency(monthRemainingCents)}
               </p>
             </div>
-            <div className="mt-3 w-full border-t border-slate-100 pt-2.5">
-              <p className="text-xs font-medium text-teal-700">
-                Receitas - despesas e faturas • Ver tetos →
-              </p>
-            </div>
-          </button>
-
-          {/* Card 4: Total a Pagar (Boletos / Contas à vista) */}
-          <div className="flex h-full min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-2xs sm:p-5">
-            <div>
-              <div className="flex min-h-9 items-start justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-slate-500 uppercase sm:text-xs">
-                  Contas & Boletos do Mês
-                </span>
-                <div className="shrink-0 rounded-lg bg-amber-50 p-2 text-amber-700">
-                  <Receipt className="h-4 w-4" />
-                </div>
-              </div>
-              <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 tabular-nums sm:text-2xl">
-                {loading && !summary ? '...' : formatCurrency(expensesCents)}
-              </p>
-            </div>
-            <div className="mt-3 border-t border-slate-100 pt-2.5">
-              <p className="text-xs text-slate-500">
-                Despesas à vista e boletos na competência
-              </p>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-3 text-xs">
+              <span className={monthRemainingCents < 0 ? 'font-medium text-rose-600' : 'text-slate-500'}>
+                {monthRemainingCents < 0
+                  ? 'Atenção: Gastos superam receitas'
+                  : 'Receitas menos despesas e faturas'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveView('budgets')}
+                className="font-medium text-teal-700 hover:text-teal-900"
+              >
+                Orçamentos →
+              </button>
             </div>
           </div>
+        </section>
 
-          {/* Card 5: Total em Faturas de Cartão */}
-          <button
-            type="button"
-            onClick={() => setActiveView('cards')}
-            className="flex h-full min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 text-left shadow-2xs transition hover:border-indigo-300 sm:col-span-2 lg:col-span-1 sm:p-5"
-          >
-            <div className="w-full">
-              <div className="flex min-h-9 items-start justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-slate-500 uppercase sm:text-xs">
-                  Faturas de Cartão
+        {/* Card Secundário Discreto: Patrimônio e Reservas Acumuladas */}
+        <section
+          aria-label="Reservas e patrimônio acumulado"
+          className="flex flex-col justify-between gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <Wallet className="h-4 w-4 shrink-0 text-slate-400" />
+            <span>Saldos de Caixa & Reservas (fora do cálculo mensal):</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-800 shadow-2xs">
+              <span className="font-normal text-slate-500">Saldo Atual em Conta:</span>
+              <span className={`tabular-nums ${currentBalance < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                {loading && !summary ? '...' : formatCurrency(currentBalance)}
+              </span>
+            </span>
+
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-100 bg-sky-50/70 px-2.5 py-1 font-semibold text-sky-800 shadow-2xs">
+              <span className="font-normal text-sky-700">Guardado / Reserva:</span>
+              <span className="tabular-nums">
+                {loading && !summary ? '...' : formatCurrency(savingsBalance)}
+              </span>
+            </span>
+
+            {benefitsBalance > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-1 font-semibold text-amber-800 shadow-2xs">
+                <span className="font-normal text-amber-700">Vale (VA/VR):</span>
+                <span className="tabular-nums">
+                  {loading && !summary ? '...' : formatCurrency(benefitsBalance)}
                 </span>
-                <div className="shrink-0 rounded-lg bg-indigo-50 p-2 text-indigo-700">
-                  <CreditCardIcon className="h-4 w-4" />
-                </div>
-              </div>
-              <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 tabular-nums sm:text-2xl">
-                {loading && !summary ? '...' : formatCurrency(creditCardCents)}
-              </p>
-            </div>
-            <div className="mt-3 w-full border-t border-slate-100 pt-2.5">
-              <p className="text-xs font-medium text-indigo-600">
-                Faturas abertas no mês • Gerir faturas →
-              </p>
-            </div>
-          </button>
+              </span>
+            )}
+          </div>
         </section>
 
         {activeView === 'transactions' ? (

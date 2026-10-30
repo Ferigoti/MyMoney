@@ -208,6 +208,7 @@ describe('CORS & Dashboard Analytics (/dashboard/summary)', () => {
       benefits_incomes_cents: 0,
       expenses_cents: 75000,
       credit_card_cents: 25000,
+      total_expenses_cents: 100000,
       free_to_spend_cents: 200000,
     });
 

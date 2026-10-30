@@ -257,5 +257,38 @@ describe('TransactionsService', () => {
       expect(() => service.createAccountTransaction({ ...base, accountId: 'nao-existe' })).toThrow(NotFoundError);
     });
   });
+
+  describe('update installment siblings', () => {
+    it('atualização de dia em parcela preserva os meses das parcelas seguintes', () => {
+      const installments = service.createCardPurchase({
+        description: 'Sofá',
+        amountCents: 90000,
+        date: '2026-10-15',
+        cardId,
+        isInstallment: true,
+        installments: 3,
+      });
+
+      expect(installments).toHaveLength(3);
+      // Atualiza a primeira parcela mudando a data para dia 20 (2026-10-20) e valor para 350,00
+      service.update(installments[0].id, {
+        date: '2026-10-20',
+        amountCents: 35000,
+      });
+
+      const updated1 = service.list().find((t) => t.id === installments[0].id)!;
+      const updated2 = service.list().find((t) => t.id === installments[1].id)!;
+      const updated3 = service.list().find((t) => t.id === installments[2].id)!;
+
+      expect(updated1.date).toBe('2026-10-20');
+      expect(updated1.amountCents).toBe(35000);
+
+      // As parcelas irmãs devem ter o valor atualizado e o dia atualizado para 20, preservando seus meses originais
+      expect(updated2.amountCents).toBe(35000);
+      expect(updated2.date.endsWith('-20')).toBe(true);
+      expect(updated3.amountCents).toBe(35000);
+      expect(updated3.date.endsWith('-20')).toBe(true);
+    });
+  });
 });
 

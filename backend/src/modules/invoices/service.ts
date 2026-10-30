@@ -6,7 +6,9 @@ import { findAccountById } from '../accounts/repository.js';
 import { findCreditCardById } from '../cards/repository.js';
 import { materializeRecurringForMonth } from '../recurring/service.js';
 import { deleteTransactionById, insertTransactions } from '../transactions/repository.js';
+import { addMonths } from '../transactions/transactions.service.js';
 import {
+  findInvoiceByCardAndDueMonth,
   findInvoiceByCardAndMonth,
   findInvoiceById,
   listInvoiceTransactions,
@@ -32,9 +34,14 @@ export function createInvoicesService(db: DB) {
 
       db.transaction((tx) => {
         materializeRecurringForMonth(tx, month);
+        const prevMonth = addMonths(month, -1);
+        materializeRecurringForMonth(tx, prevMonth);
       });
 
-      const invoice = findInvoiceByCardAndMonth(db, cardId, month);
+      let invoice = findInvoiceByCardAndDueMonth(db, cardId, month);
+      if (!invoice) {
+        invoice = findInvoiceByCardAndMonth(db, cardId, month);
+      }
       if (!invoice) return { cardId, month, invoice: null, totalCents: 0, transactions: [] };
 
       return {

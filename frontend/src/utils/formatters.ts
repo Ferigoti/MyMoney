@@ -174,3 +174,142 @@ export function applyTheme(theme: AppTheme): void {
   document.documentElement.classList.toggle('dark', theme === 'dark');
 }
 
+export interface TransferInfo {
+  isTransfer: true;
+  direction: 'out' | 'in';
+  baseDescription: string;
+  counterpartAccountName: string;
+}
+
+export function parseTransferDescription(description: string): TransferInfo | null {
+  const outMatch = /^(.*)\s+\(Saída\s*→\s*(.+)\)$/i.exec(description);
+  if (outMatch) {
+    return {
+      isTransfer: true,
+      direction: 'out',
+      baseDescription: outMatch[1]!.trim(),
+      counterpartAccountName: outMatch[2]!.trim(),
+    };
+  }
+  const inMatch = /^(.*)\s+\(Entrada\s*←\s*(.+)\)$/i.exec(description);
+  if (inMatch) {
+    return {
+      isTransfer: true,
+      direction: 'in',
+      baseDescription: inMatch[1]!.trim(),
+      counterpartAccountName: inMatch[2]!.trim(),
+    };
+  }
+  return null;
+}
+
+export interface ConsolidatableTransaction {
+  id: string;
+  description: string;
+  amountCents: number;
+  date: string;
+  accountId: string | null;
+}
+
+export interface ConsolidatedTransferFields {
+  isTransfer: boolean;
+  transferCleanDescription?: string;
+  transferOriginAccountName?: string;
+  transferDestinationAccountName?: string;
+  pairedTransactionId?: string;
+  transferDirection?: 'out' | 'in';
+}
+
+/**
+ * Une os pares de transações de uma mesma transferência entre contas
+ * (`(Saída → Destino)` e `(Entrada ← Origem)`) em um único item consolidado para exibição no extrato.
+ */
+export function consolidateTransferTransactions<T extends ConsolidatableTransaction>(
+  items: T[],
+  accountsMap: ReadonlyMap<string, { name: string }>,
+): (T & ConsolidatedTransferFields)[] {
+  const parsedMap = new Map<string, TransferInfo>();
+  for (const item of items) {
+    const info = parseTransferDescription(item.description);
+    if (info) {
+      parsedMap.set(item.id, info);
+    }
+  }
+
+  const consumedInIds = new Set<string>();
+  const pairedOutToIn = new Map<string, T>();
+
+  for (const item of items) {
+    const info = parsedMap.get(item.id);
+    if (!info || info.direction !== 'out') continue;
+
+    const matchingIn = items.find((candidate) => {
+      if (candidate.id === item.id || consumedInIds.has(candidate.id)) return false;
+      const candInfo = parsedMap.get(candidate.id);
+      if (!candInfo || candInfo.direction !== 'in') return false;
+      return (
+        candidate.date === item.date &&
+        candidate.amountCents === item.amountCents &&
+        candInfo.baseDescription.toLowerCase() === info.baseDescription.toLowerCase()
+      );
+    });
+
+    if (matchingIn) {
+      consumedInIds.add(matchingIn.id);
+      pairedOutToIn.set(item.id, matchingIn);
+    }
+  }
+
+  const result: (T & ConsolidatedTransferFields)[] = [];
+
+  for (const item of items) {
+    if (consumedInIds.has(item.id)) {
+      continue;
+    }
+
+    const info = parsedMap.get(item.id);
+    if (!info) {
+      result.push({ ...item, isTransfer: false });
+      continue;
+    }
+
+    if (info.direction === 'out') {
+      const pairedIn = pairedOutToIn.get(item.id);
+      const pairedInInfo = pairedIn ? parsedMap.get(pairedIn.id) : undefined;
+      const originName =
+        (item.accountId ? accountsMap.get(item.accountId)?.name : undefined) ??
+        pairedInInfo?.counterpartAccountName ??
+        'Conta Origem';
+      const destName =
+        (pairedIn?.accountId ? accountsMap.get(pairedIn.accountId)?.name : undefined) ??
+        info.counterpartAccountName;
+
+      result.push({
+        ...item,
+        isTransfer: true,
+        transferCleanDescription: info.baseDescription,
+        transferOriginAccountName: originName,
+        transferDestinationAccountName: destName,
+        ...(pairedIn ? { pairedTransactionId: pairedIn.id } : {}),
+        transferDirection: 'out',
+      });
+    } else {
+      const originName = info.counterpartAccountName;
+      const destName =
+        (item.accountId ? accountsMap.get(item.accountId)?.name : undefined) ?? 'Conta Destino';
+
+      result.push({
+        ...item,
+        isTransfer: true,
+        transferCleanDescription: info.baseDescription,
+        transferOriginAccountName: originName,
+        transferDestinationAccountName: destName,
+        transferDirection: 'in',
+      });
+    }
+  }
+
+  return result;
+}
+
+

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { DB } from '../../db/client.js';
 import { idParamsSchema } from '../../shared/validation.js';
-import { createAccountSchema } from './schemas.js';
+import { createAccountSchema, updateAccountSchema } from './schemas.js';
 import { createAccountsService } from './service.js';
 
 export const accountsRoutes: FastifyPluginAsyncZod<{ db: DB }> = async (app, { db }) => {
@@ -11,6 +11,14 @@ export const accountsRoutes: FastifyPluginAsyncZod<{ db: DB }> = async (app, { d
 
   app.post('/', { schema: { body: createAccountSchema } }, async (request, reply) =>
     reply.status(201).send({ data: service.create(request.body) }),
+  );
+
+  app.put(
+    '/:id',
+    { schema: { params: idParamsSchema, body: updateAccountSchema } },
+    async (request) => ({
+      data: service.update(request.params.id, request.body),
+    }),
   );
 
   app.delete('/:id', { schema: { params: idParamsSchema } }, async (request) => ({

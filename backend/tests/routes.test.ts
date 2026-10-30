@@ -637,6 +637,36 @@ describe('HTTP routes & Zod validation', () => {
       date: '2026-12-08',
       recurringId: createdSubTx.recurringId,
     });
+
+    // Cartão com fechamento após o vencimento (ex: fecha dia 25, vence dia 05 do mês seguinte)
+    const cardLateClosing = (
+      await app.inject({
+        method: 'POST',
+        url: '/cards',
+        payload: { name: 'Cartão Santander', limitCents: 500000, closingDay: 25, dueDay: 5 },
+      })
+    ).json().data;
+
+    // Compra no dia 15/10/2026 -> fecha em 25/10/2026 e vence em 05/11/2026
+    await app.inject({
+      method: 'POST',
+      url: '/transactions',
+      payload: {
+        description: 'Livro de Finanças',
+        amountCents: 7500,
+        date: '2026-10-15',
+        cardId: cardLateClosing.id,
+      },
+    });
+
+    // Ao consultar a fatura com vencimento em novembro (month=2026-11), deve trazer a fatura com vencimento em 05/11/2026
+    const novLateInvRes = await app.inject({
+      method: 'GET',
+      url: `/cards/${cardLateClosing.id}/invoices?month=2026-11`,
+    });
+    expect(novLateInvRes.statusCode).toBe(200);
+    expect(novLateInvRes.json().data.totalCents).toBe(7500);
+    expect(novLateInvRes.json().data.invoice.dueDate).toBe('2026-11-05');
   });
 });
 

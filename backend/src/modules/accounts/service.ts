@@ -1,5 +1,4 @@
 import type { DB } from '../../db/client.js';
-import type { Account } from '../../db/schema.js';
 import { ConflictError, NotFoundError } from '../../shared/errors.js';
 import {
   countTransactionsByAccountId,
@@ -8,20 +7,59 @@ import {
   findAccountByName,
   insertAccount,
   listAccounts,
+  sumPaidNetByAccountId,
+  updateAccountById,
+  type AccountWithBalance,
 } from './repository.js';
-import type { CreateAccountInput } from './schemas.js';
+import type { CreateAccountInput, UpdateAccountInput } from './schemas.js';
 
 export function createAccountsService(db: DB) {
   return {
-    list(): Account[] {
+    list(): AccountWithBalance[] {
       return listAccounts(db);
     },
 
-    create(input: CreateAccountInput): Account {
+    create(input: CreateAccountInput): AccountWithBalance {
       if (findAccountByName(db, input.name)) {
         throw new ConflictError(`Já existe uma conta chamada "${input.name}"`);
       }
-      return insertAccount(db, input);
+      const created = insertAccount(db, input);
+      return {
+        ...created,
+        currentBalanceCents: created.initialBalanceCents,
+      };
+    },
+
+    update(id: string, input: UpdateAccountInput): AccountWithBalance {
+      return db.transaction((tx) => {
+        const current = findAccountById(tx, id);
+        if (!current) throw new NotFoundError('Conta', id);
+
+        if (input.name !== undefined && input.name !== current.name) {
+          if (findAccountByName(tx, input.name)) {
+            throw new ConflictError(`Já existe uma conta chamada "${input.name}"`);
+          }
+        }
+
+        const paidNetCents = sumPaidNetByAccountId(tx, id);
+        const nextInitialBalanceCents =
+          input.currentBalanceCents !== undefined
+            ? input.currentBalanceCents - paidNetCents
+            : input.initialBalanceCents;
+
+        const updated = updateAccountById(tx, id, {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(nextInitialBalanceCents !== undefined
+            ? { initialBalanceCents: nextInitialBalanceCents }
+            : {}),
+        });
+
+        return {
+          ...updated,
+          currentBalanceCents: updated.initialBalanceCents + paidNetCents,
+        };
+      });
     },
 
     delete(id: string): { deletedId: string } {

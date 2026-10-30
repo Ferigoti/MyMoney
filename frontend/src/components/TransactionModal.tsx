@@ -88,6 +88,8 @@ export function TransactionModal({
   const [isRecurring, setIsRecurring] = useState<boolean>(false);
   const [isInstallment, setIsInstallment] = useState<boolean>(false);
   const [installments, setInstallments] = useState<number>(2);
+  const [installmentMode, setInstallmentMode] = useState<'total' | 'installment'>('total');
+  const [installmentAmountCents, setInstallmentAmountCents] = useState<number>(0);
 
   // Estado opcional para cadastro rápido de cartão quando ainda não houver nenhum
   const [showNewCardForm, setShowNewCardForm] = useState<boolean>(false);
@@ -155,6 +157,8 @@ export function TransactionModal({
   const resetForm = () => {
     setDescription('');
     setAmountCents(0);
+    setInstallmentAmountCents(0);
+    setInstallmentMode('total');
     setDate(getDefaultDateForMonth(defaultMonth));
     setIsPaid(true);
     setIsRecurring(false);
@@ -204,7 +208,13 @@ export function TransactionModal({
       setError('Informe uma descrição para o lançamento.');
       return;
     }
-    if (amountCents <= 0) {
+    const isCardInstallment = activeTab === 'card' && isInstallment && !isRecurring;
+    const effectiveTotalAmountCents =
+      isCardInstallment && installmentMode === 'installment' && installmentAmountCents > 0
+        ? installmentAmountCents * installments
+        : amountCents;
+
+    if (effectiveTotalAmountCents <= 0) {
       setError('O valor deve ser maior que R$ 0,00.');
       return;
     }
@@ -227,7 +237,7 @@ export function TransactionModal({
 
         await createTransaction({
           description: `${trimmedDesc} (Saída → ${destAcc?.name ?? 'Destino'})`,
-          amountCents,
+          amountCents: effectiveTotalAmountCents,
           type: 'expense',
           date,
           accountId: effectiveAccountId,
@@ -235,7 +245,7 @@ export function TransactionModal({
         });
         await createTransaction({
           description: `${trimmedDesc} (Entrada ← ${originAcc?.name ?? 'Origem'})`,
-          amountCents,
+          amountCents: effectiveTotalAmountCents,
           type: 'income',
           date,
           accountId: effectiveDestinationAccountId,
@@ -249,7 +259,7 @@ export function TransactionModal({
         }
         await createTransaction({
           description: trimmedDesc,
-          amountCents,
+          amountCents: effectiveTotalAmountCents,
           date,
           cardId: effectiveCardId,
           ...(effectiveCategoryId ? { categoryId: effectiveCategoryId } : {}),
@@ -284,9 +294,6 @@ export function TransactionModal({
       setSubmitting(false);
     }
   };
-
-  const installmentPreviewCents =
-    isInstallment && installments >= 2 ? Math.floor(amountCents / installments) : 0;
 
   return (
     <div
@@ -415,7 +422,13 @@ export function TransactionModal({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="tx-amount" className="mb-1 block text-xs font-medium text-slate-700">
-                {activeTab === 'card' ? 'Valor Total (R$)' : 'Valor (R$)'}
+                {activeTab === 'card'
+                  ? isInstallment && !isRecurring
+                    ? installmentMode === 'installment'
+                      ? 'Valor de Cada Parcela (R$)'
+                      : 'Valor Total da Compra (R$)'
+                    : 'Valor da Compra (R$)'
+                  : 'Valor (R$)'}
               </label>
               <div className="relative">
                 <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-sm font-medium text-slate-400">
@@ -426,8 +439,25 @@ export function TransactionModal({
                   type="text"
                   inputMode="numeric"
                   required
-                  value={centsToInput(amountCents)}
-                  onChange={(e) => setAmountCents(digitsToCents(e.target.value))}
+                  value={
+                    activeTab === 'card' && isInstallment && !isRecurring && installmentMode === 'installment'
+                      ? centsToInput(installmentAmountCents)
+                      : centsToInput(amountCents)
+                  }
+                  onChange={(e) => {
+                    const cents = digitsToCents(e.target.value);
+                    if (activeTab === 'card' && isInstallment && !isRecurring) {
+                      if (installmentMode === 'installment') {
+                        setInstallmentAmountCents(cents);
+                        setAmountCents(cents * installments);
+                      } else {
+                        setAmountCents(cents);
+                        setInstallmentAmountCents(installments >= 2 ? Math.floor(cents / installments) : cents);
+                      }
+                    } else {
+                      setAmountCents(cents);
+                    }
+                  }}
                   className="w-full rounded-lg border border-slate-300 bg-white py-2 pr-3.5 pl-10 text-sm font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
                 />
               </div>
@@ -759,35 +789,110 @@ export function TransactionModal({
                 </label>
 
                 {isInstallment && (
-                  <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="space-y-3 pt-1">
+                    <div className="space-y-1.5">
+                      <span className="block text-[11px] font-medium text-slate-600">
+                        Como você prefere informar o valor?
+                      </span>
+                      <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-200/60 p-1 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInstallmentMode('total');
+                            if (installmentAmountCents > 0) {
+                              setAmountCents(installmentAmountCents * installments);
+                            }
+                          }}
+                          className={`rounded-md py-1.5 px-2 font-medium transition ${
+                            installmentMode === 'total'
+                              ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Valor Total da Compra
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInstallmentMode('installment');
+                            if (amountCents > 0) {
+                              setInstallmentAmountCents(Math.floor(amountCents / installments));
+                            }
+                          }}
+                          className={`rounded-md py-1.5 px-2 font-medium transition ${
+                            installmentMode === 'installment'
+                              ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Valor de Cada Parcela
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
                       <label
                         htmlFor="tx-installments"
                         className="text-xs font-medium text-slate-700"
                       >
                         Número de parcelas:
                       </label>
-                      <input
-                        id="tx-installments"
-                        type="number"
-                        min={2}
-                        max={48}
-                        required
-                        value={installments}
-                        onChange={(e) =>
-                          setInstallments(Math.max(2, Math.min(48, Number(e.target.value) || 2)))
-                        }
-                        className="w-20 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          id="tx-installments"
+                          type="number"
+                          min={2}
+                          max={48}
+                          required
+                          value={installments}
+                          onChange={(e) => {
+                            const next = Math.max(2, Math.min(48, Number(e.target.value) || 2));
+                            setInstallments(next);
+                            if (installmentMode === 'installment' && installmentAmountCents > 0) {
+                              setAmountCents(installmentAmountCents * next);
+                            } else if (installmentMode === 'total' && amountCents > 0) {
+                              setInstallmentAmountCents(Math.floor(amountCents / next));
+                            }
+                          }}
+                          className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
+                        />
+                        <span className="text-xs text-slate-500">vezes</span>
+                      </div>
                     </div>
-                    {amountCents > 0 && (
-                      <span className="text-xs text-slate-600">
-                        {installments}x de aprox.{' '}
-                        <strong className="text-slate-900">
-                          {formatCurrency(installmentPreviewCents)}
-                        </strong>
-                      </span>
+
+                    {installmentMode === 'installment' && installmentAmountCents > 0 && (
+                      <div className="rounded-lg border border-indigo-200/80 bg-indigo-50/70 p-2.5 text-xs text-indigo-950">
+                        <p className="font-semibold text-indigo-900">
+                          Simulação: {installments} parcelas de {formatCurrency(installmentAmountCents)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-indigo-700">
+                          Total da compra: <strong>{formatCurrency(installmentAmountCents * installments)}</strong>
+                        </p>
+                      </div>
                     )}
+
+                    {installmentMode === 'total' && amountCents > 0 && (() => {
+                      const base = Math.floor(amountCents / installments);
+                      const remainder = amountCents % installments;
+                      return (
+                        <div className="rounded-lg border border-indigo-200/80 bg-indigo-50/70 p-2.5 text-xs text-indigo-950">
+                          <p className="font-semibold text-indigo-900">
+                            Simulação:{' '}
+                            {remainder === 0 ? (
+                              <span>{installments} parcelas de {formatCurrency(base)}</span>
+                            ) : (
+                              <span>
+                                1ª parcela de {formatCurrency(base + remainder)} e {installments - 1}x de{' '}
+                                {formatCurrency(base)}
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-indigo-700">
+                            Total da compra: <strong>{formatCurrency(amountCents)}</strong>
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

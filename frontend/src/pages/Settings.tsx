@@ -8,6 +8,7 @@ import {
   Landmark,
   Moon,
   Palette,
+  Pencil,
   Plus,
   ShieldCheck,
   Sun,
@@ -19,6 +20,7 @@ import {
   createAccount,
   deleteAccount,
   downloadDatabaseBackup,
+  updateAccount,
 } from '../services/api';
 import type { Account, AccountType } from '../types';
 import {
@@ -68,8 +70,9 @@ export function Settings({
     message: string;
   } | null>(null);
 
-  // Modal de Nova Conta
+  // Modal de Conta (criação ou edição do saldo atual)
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [accountName, setAccountName] = useState('');
   const [accountType, setAccountType] = useState<AccountType>('CHECKING');
   const [accountBalanceCents, setAccountBalanceCents] = useState(0);
@@ -80,10 +83,28 @@ export function Settings({
   // Backup
   const [downloadingFormat, setDownloadingFormat] = useState<'sqlite' | 'json' | null>(null);
 
+  // Abre o modal para cadastrar uma nova conta
   function openNewAccountModal() {
+    setEditingAccountId(null);
     setAccountName('');
     setAccountType('CHECKING');
     setAccountBalanceCents(0);
+    setAccountModalError(null);
+    setIsAccountModalOpen(true);
+  }
+
+  // Abre o modal para editar uma conta existente (saldo atual ajustável manualmente)
+  function openEditAccountModal(acc: Account) {
+    setEditingAccountId(acc.id);
+    setAccountName(acc.name);
+    // Normaliza tipos legados em minúsculo para as opções do select
+    const upper = acc.type.toUpperCase();
+    setAccountType(
+      (['CHECKING', 'CASH', 'BENEFIT', 'SAVINGS'].includes(upper) ? upper : 'CHECKING') as AccountType,
+    );
+    // Usa o saldo atual calculado pelo backend; cai para o saldo inicial se ausente
+    const current = acc.currentBalanceCents ?? acc.initialBalanceCents;
+    setAccountBalanceCents(current);
     setAccountModalError(null);
     setIsAccountModalOpen(true);
   }
@@ -95,23 +116,38 @@ export function Settings({
       setAccountModalError('Informe o nome da conta ou carteira.');
       return;
     }
-
     setSavingAccount(true);
     setAccountModalError(null);
     try {
-      await createAccount({
-        name: trimmed,
-        type: accountType,
-        initialBalanceCents: accountBalanceCents,
-      });
-      await onRefreshAll();
+      if (editingAccountId) {
+        // Atualiza a conta enviando o saldo atual desejado (backend recalcula o saldo inicial)
+        await updateAccount(editingAccountId, {
+          name: trimmed,
+          type: accountType,
+          currentBalanceCents: accountBalanceCents,
+        });
+        await onRefreshAll();
+        setFeedback({
+          type: 'success',
+          message: `Conta "${trimmed}" atualizada com sucesso.`,
+        });
+      } else {
+        // Cria nova conta
+        await createAccount({
+          name: trimmed,
+          type: accountType,
+          initialBalanceCents: accountBalanceCents,
+        });
+        await onRefreshAll();
+        setFeedback({
+          type: 'success',
+          message: `Conta "${trimmed}" cadastrada com sucesso.`,
+        });
+      }
       setIsAccountModalOpen(false);
-      setFeedback({
-        type: 'success',
-        message: `Conta "${trimmed}" cadastrada com sucesso.`,
-      });
     } catch (err) {
-      setAccountModalError(extractApiError(err, 'Não foi possível criar a conta.'));
+      const msg = extractApiError(err, editingAccountId ? 'Não foi possível atualizar a conta.' : 'Não foi possível criar a conta.');
+      setAccountModalError(msg);
     } finally {
       setSavingAccount(false);
     }
@@ -264,6 +300,15 @@ export function Settings({
                       </div>
                     </div>
 
+                    <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditAccountModal(acc)}
+                      title="Editar conta / ajustar saldo atual"
+                      className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
                     <button
                       type="button"
                       disabled={deletingAccountId === acc.id}
@@ -273,13 +318,20 @@ export function Settings({
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+                    </div>
                   </div>
 
                   <div className="mt-4 border-t border-slate-200/70 pt-3">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-xs text-slate-500">Saldo Inicial</span>
-                      <span className="text-sm font-bold text-slate-900 tabular-nums">
-                        {formatCurrency(acc.initialBalanceCents)}
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs text-slate-500">Saldo Atual</span>
+                      <span
+                        className={`text-sm font-bold tabular-nums ${
+                          (acc.currentBalanceCents ?? acc.initialBalanceCents) < 0
+                            ? 'text-rose-600'
+                            : 'text-slate-900'
+                        }`}
+                      >
+                        {formatCurrency(acc.currentBalanceCents ?? acc.initialBalanceCents)}
                       </span>
                     </div>
                   </div>
@@ -381,12 +433,14 @@ export function Settings({
         </div>
       </section>
 
-      {/* Modal: Nova Conta */}
+      {/* Modal: Nova Conta / Editar Conta */}
       {isAccountModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900">Nova Conta / Carteira</h3>
+              <h3 className="text-base font-bold text-slate-900">
+                {editingAccountId ? 'Editar Conta / Ajustar Saldo' : 'Nova Conta / Carteira'}
+              </h3>
               <button
                 type="button"
                 onClick={() => setIsAccountModalOpen(false)}
@@ -436,15 +490,27 @@ export function Settings({
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">
-                  Saldo Inicial (R$)
+                  {editingAccountId ? 'Saldo Atual (R$)' : 'Saldo Inicial (R$)'}
                 </label>
                 <input
                   type="text"
                   inputMode="numeric"
                   value={centsToInput(accountBalanceCents)}
-                  onChange={(e) => setAccountBalanceCents(digitsToCents(e.target.value))}
+                  onChange={(e) => {
+                    // Digitar "-" em qualquer posição torna o saldo negativo (cheque especial)
+                    const raw = e.target.value;
+                    const cents = digitsToCents(raw);
+                    setAccountBalanceCents(raw.includes('-') ? -cents : cents);
+                  }}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900 tabular-nums outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                 />
+                {editingAccountId && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                    Informe o saldo real da conta hoje. O sistema ajusta o saldo inicial
+                    automaticamente para que o saldo atual fique exatamente com este valor, sem
+                    alterar nenhum lançamento.
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -460,7 +526,7 @@ export function Settings({
                   disabled={savingAccount}
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {savingAccount ? 'Salvando...' : 'Criar Conta'}
+                  {savingAccount ? 'Salvando...' : editingAccountId ? 'Salvar Alterações' : 'Criar Conta'}
                 </button>
               </div>
             </form>

@@ -28,6 +28,7 @@ export interface Account {
   name: string;
   type: AccountType;
   initialBalanceCents: number;
+  currentBalanceCents?: number;
   isArchived: boolean;
   createdAt: string;
 }
@@ -140,6 +141,7 @@ export interface DashboardSummary {
     benefits_incomes_cents?: number;
     expenses_cents: number;
     credit_card_cents: number;
+    total_expenses_cents?: number;
     free_to_spend_cents?: number;
   };
   expenses_by_category: ExpenseByCategoryItem[];
