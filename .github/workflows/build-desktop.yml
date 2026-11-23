@@ -35,7 +35,7 @@ jobs:
 
       - name: Instalar dependências do backend
         working-directory: backend
-        run: npm install
+        run: npm install --ignore-scripts
 
       - name: Instalar dependências do frontend
         working-directory: frontend
@@ -43,7 +43,9 @@ jobs:
 
       - name: Instalar dependências do desktop
         working-directory: desktop
-        run: npm install
+        run: |
+          npm install --ignore-scripts
+          node node_modules/electron/install.js
 
       - name: Gerar executável (${{ matrix.platform }})
         working-directory: desktop
