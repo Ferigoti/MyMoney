@@ -103,15 +103,16 @@ export function invoicePeriodForMonth(month: string, closingDay: number, dueDay:
 }
 
 /**
- * Determina a fatura de uma compra no cartão.
- * - dia da compra <= closing_day → competência do próprio mês
- * - dia da compra >  closing_day → competência do mês seguinte
+ * Determina a fatura de uma compra no cartão (padrão bancos brasileiros):
+ * - dia da compra <  closing_day → entra na fatura que fecha neste mês
+ * - dia da compra >= closing_day → o dia do fechamento já é o melhor dia de compra,
+ *   entrando na fatura do mês seguinte.
  */
 export function resolveInvoicePeriod(purchaseDate: string, closingDay: number, dueDay: number): InvoicePeriod {
   const { year, month, day } = parseIsoDate(purchaseDate);
   const currentMonth = `${pad(year, 4)}-${pad(month)}`;
   const effectiveClosingDay = Math.min(closingDay, daysInMonth(year, month));
-  const target = day <= effectiveClosingDay ? currentMonth : addMonths(currentMonth, 1);
+  const target = day < effectiveClosingDay ? currentMonth : addMonths(currentMonth, 1);
   return invoicePeriodForMonth(target, closingDay, dueDay);
 }
 
@@ -362,17 +363,21 @@ export function createTransactionsService(db: DB) {
           ...(input.isPaid !== undefined ? { isPaid: input.isPaid } : {}),
         });
 
-        // Se for uma parcela de cartão (installmentGroupId !== null), propaga descrição, valor, dia da data e categoria
+        // Se for uma parcela de cartão (installmentGroupId !== null), propaga descrição, categoria,
+        // valor (apenas se efetivamente alterado, preservando centavos de resto) e dia da data
         // para todas as demais parcelas em faturas ainda não pagas (todos os meses).
         if (current.installmentGroupId !== null) {
-          const nextDay = input.date !== undefined ? parseIsoDate(input.date).day : undefined;
+          const amountChanged =
+            nextAmountCents !== undefined && nextAmountCents !== current.amountCents;
+          const dateChanged = input.date !== undefined && input.date !== current.date;
+          const nextDay = dateChanged ? parseIsoDate(input.date!).day : undefined;
           const unpaidInstallments = listUnpaidByInstallmentGroup(tx, current.installmentGroupId);
           for (const sibling of unpaidInstallments) {
             if (sibling.id === id) continue;
             const siblingMonth = sibling.date.slice(0, 7);
             updateTransactionById(tx, sibling.id, {
               ...(input.description !== undefined ? { description: input.description } : {}),
-              ...(nextAmountCents !== undefined ? { amountCents: nextAmountCents } : {}),
+              ...(amountChanged ? { amountCents: nextAmountCents } : {}),
               ...(nextDay !== undefined ? { date: dateInMonth(siblingMonth, nextDay) } : {}),
               ...(hasCategoryUpdate ? { categoryId: nextCategoryId ?? null } : {}),
             });

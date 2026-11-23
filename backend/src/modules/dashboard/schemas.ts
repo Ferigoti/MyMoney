@@ -1,11 +1,34 @@
 import { z } from 'zod';
 import { monthSchema } from '../../shared/validation.js';
 
-export const dashboardSummaryQuerySchema = z.strictObject({
-  month: monthSchema,
-});
+export const MAX_HISTORY_MONTHS = 24;
 
-export type DashboardSummaryQuery = z.output<typeof dashboardSummaryQuerySchema>;
+export const dashboardSummaryQuerySchema = z
+  .strictObject({
+    month: monthSchema,
+    historyMonths: z.coerce.number().int().min(1).max(MAX_HISTORY_MONTHS).optional(),
+    historyStart: monthSchema.optional(),
+    historyEnd: monthSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if ((data.historyStart && !data.historyEnd) || (!data.historyStart && data.historyEnd)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['historyStart'],
+        message: 'Informe historyStart e historyEnd juntos para período personalizado',
+      });
+      return;
+    }
+    if (data.historyStart && data.historyEnd && data.historyStart > data.historyEnd) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['historyEnd'],
+        message: 'historyEnd deve ser igual ou posterior a historyStart',
+      });
+    }
+  });
+
+export type DashboardSummaryQuery = z.input<typeof dashboardSummaryQuerySchema>;
 
 /** Máximo de competências que podem ser analisadas juntas no Planejamento Mensal. */
 export const MAX_PLANNING_MONTHS = 24;

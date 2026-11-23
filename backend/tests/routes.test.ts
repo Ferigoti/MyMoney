@@ -83,14 +83,14 @@ describe('HTTP routes & Zod validation', () => {
     expect(cardRes.statusCode).toBe(201);
     const card = cardRes.json().data;
 
-    // Compra parcelada de R$ 100,00 (10000 centavos) em 3x no dia 2026-11-10 (no fechamento -> 2026-11, 2026-12, 2027-01)
+    // Compra parcelada de R$ 100,00 (10000 centavos) em 3x no dia 2026-11-09 (antes do fechamento -> 2026-11, 2026-12, 2027-01)
     const txRes = await app.inject({
       method: 'POST',
       url: '/transactions',
       payload: {
         description: 'Fone Bluetooth',
         amountCents: 10000,
-        date: '2026-11-10',
+        date: '2026-11-09',
         cardId: card.id,
         isInstallment: true,
         installments: 3,

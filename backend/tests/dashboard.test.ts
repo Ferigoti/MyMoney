@@ -247,6 +247,30 @@ describe('CORS & Dashboard Analytics (/dashboard/summary)', () => {
       { month: '2026-10', incomes_cents: 200000, expenses_cents: 50000 },
       { month: '2026-11', incomes_cents: 300000, expenses_cents: 100000 },
     ]);
+
+    // Filtro de quantidade de meses (historyMonths=3)
+    const res3m = await app.inject({
+      method: 'GET',
+      url: '/dashboard/summary?month=2026-11&historyMonths=3',
+    });
+    expect(res3m.statusCode).toBe(200);
+    expect(res3m.json().data.six_months_history).toEqual([
+      { month: '2026-09', incomes_cents: 0, expenses_cents: 0 },
+      { month: '2026-10', incomes_cents: 200000, expenses_cents: 50000 },
+      { month: '2026-11', incomes_cents: 300000, expenses_cents: 100000 },
+    ]);
+
+    // Filtro de período personalizado (historyStart..historyEnd)
+    const resCustom = await app.inject({
+      method: 'GET',
+      url: '/dashboard/summary?month=2026-11&historyStart=2026-10&historyEnd=2026-12',
+    });
+    expect(resCustom.statusCode).toBe(200);
+    expect(resCustom.json().data.six_months_history).toEqual([
+      { month: '2026-10', incomes_cents: 200000, expenses_cents: 50000 },
+      { month: '2026-11', incomes_cents: 300000, expenses_cents: 100000 },
+      { month: '2026-12', incomes_cents: 0, expenses_cents: 0 },
+    ]);
   });
 
   it('separa available_balance_cents (CHECKING/CASH), savings_balance_cents (SAVINGS) e benefits_balance_cents (BENEFIT) sem misturar no free_to_spend', async () => {

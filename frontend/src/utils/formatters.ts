@@ -30,37 +30,53 @@ export function centsToInput(cents: number): string {
 
 /**
  * Converte um valor digitado em input ('1.234,56', 'R$ 12,50', '12.50' ou dígitos)
- * para um inteiro estrito em centavos.
+ * para um inteiro estrito em centavos, usando parsing puro por string (sem float).
  */
 export function inputToCents(val: string): number {
   const trimmed = val.trim();
   if (!trimmed) return 0;
 
   const isNegative = trimmed.startsWith('-');
-  // Mantém apenas dígitos, vírgula e ponto
   const cleaned = trimmed.replace(/[^\d.,]/g, '');
   if (!cleaned) return 0;
 
-  // Se houver vírgula, assume padrão pt-BR ('1.234,56' -> '1234.56')
-  let normalized: string;
+  let intStr: string;
+  let decStr = '';
+
   if (cleaned.includes(',')) {
-    normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    const [rawInt = '', rawDec = ''] = cleaned.replace(/\./g, '').split(',');
+    intStr = rawInt.replace(/\D/g, '');
+    decStr = rawDec.replace(/\D/g, '');
+  } else if (cleaned.includes('.')) {
+    const parts = cleaned.split('.');
+    const last = parts[parts.length - 1] ?? '';
+    if (parts.length === 2 && last.length <= 2) {
+      intStr = (parts[0] ?? '').replace(/\D/g, '');
+      decStr = last.replace(/\D/g, '');
+    } else {
+      intStr = cleaned.replace(/\D/g, '');
+    }
   } else {
-    normalized = cleaned;
+    intStr = cleaned.replace(/\D/g, '');
   }
 
-  const parsed = Number.parseFloat(normalized);
-  if (!Number.isFinite(parsed)) return 0;
+  const safeInt = Number.parseInt(intStr || '0', 10);
+  const paddedDec = (decStr + '00').slice(0, 2);
+  const thirdDigit = decStr.length > 2 ? Number.parseInt(decStr[2]!, 10) : 0;
+  let decCents = Number.parseInt(paddedDec, 10);
+  if (thirdDigit >= 5) decCents += 1;
 
-  const cents = Math.round(parsed * 100);
+  const cents = safeInt * 100 + decCents;
+  if (!Number.isSafeInteger(cents)) return 0;
   return isNegative ? -cents : cents;
 }
 
 /**
  * Converte apenas os dígitos de uma string em centavos (máscara ATM: '1250' -> 1250 centavos -> '12,50').
+ * Limita a 13 dígitos (até R$ 99 bilhões) para garantir precisão inteira segura.
  */
 export function digitsToCents(raw: string): number {
-  const digits = raw.replace(/\D/g, '');
+  const digits = raw.replace(/\D/g, '').slice(0, 13);
   if (!digits) return 0;
   return Number.parseInt(digits, 10);
 }
@@ -141,6 +157,84 @@ export function formatIsoDate(isoDate: string): string {
   const parts = isoDate.split('-');
   if (parts.length !== 3) return isoDate;
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function daysInCalendarMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function clampDateInMonth(yearMonth: string, day: number): string {
+  const [yStr, mStr] = yearMonth.split('-');
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const clampedDay = Math.min(Math.max(1, day), daysInCalendarMonth(year, month));
+  return `${yearMonth}-${String(clampedDay).padStart(2, '0')}`;
+}
+
+function shiftIsoDateDays(isoDate: string, deltaDays: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  if (!y || !m || !d) return isoDate;
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return `${String(dt.getUTCFullYear()).padStart(4, '0')}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Calcula em qual fatura (competência, fechamento e vencimento) uma compra cai,
+ * seguindo o padrão dos bancos brasileiros:
+ * - dia < closingDay  -> fatura que fecha neste mês
+ * - dia >= closingDay -> dia de fechamento já é o melhor dia, entra na próxima fatura
+ */
+export function computeInvoicePeriodForPurchase(
+  purchaseDate: string,
+  closingDay: number,
+  dueDay: number,
+): { closingMonth: string; closingDate: string; dueMonth: string; dueDate: string } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(purchaseDate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const currentMonth = `${match[1]}-${match[2]}`;
+  const effectiveClosingDay = Math.min(closingDay, daysInCalendarMonth(year, month));
+  const closingMonth = day < effectiveClosingDay ? currentMonth : shiftYearMonth(currentMonth, 1);
+  const dueMonth = dueDay > closingDay ? closingMonth : shiftYearMonth(closingMonth, 1);
+  return {
+    closingMonth,
+    closingDate: clampDateInMonth(closingMonth, closingDay),
+    dueMonth,
+    dueDate: clampDateInMonth(dueMonth, dueDay),
+  };
+}
+
+/**
+ * Retorna a janela real de compras (início e fim inclusivos) que compõem uma fatura
+ * com data de fechamento `closingDate` (ex.: fecha dia 02/12 -> compras de 02/11 a 01/12).
+ */
+export function computeInvoiceBillingWindow(
+  closingDate: string,
+  closingDay: number,
+): { startDate: string; endDate: string } {
+  const closingMonth = closingDate.slice(0, 7);
+  const prevClosingMonth = shiftYearMonth(closingMonth, -1);
+  const startDate = clampDateInMonth(prevClosingMonth, closingDay);
+  const endDate = shiftIsoDateDays(closingDate, -1);
+  return { startDate, endDate };
+}
+
+/**
+ * Calcula datas previstas de fechamento, vencimento e período de compras para uma fatura
+ * com vencimento em `dueMonth` ('YYYY-MM'), mesmo antes de existir registro no banco.
+ */
+export function computeExpectedInvoiceForDueMonth(
+  dueMonth: string,
+  closingDay: number,
+  dueDay: number,
+): { closingDate: string; dueDate: string; startDate: string; endDate: string } {
+  const closingMonth = dueDay > closingDay ? dueMonth : shiftYearMonth(dueMonth, -1);
+  const closingDate = clampDateInMonth(closingMonth, closingDay);
+  const dueDate = clampDateInMonth(dueMonth, dueDay);
+  const { startDate, endDate } = computeInvoiceBillingWindow(closingDate, closingDay);
+  return { closingDate, dueDate, startDate, endDate };
 }
 
 export function formatAccountTypeLabel(type: string): string {

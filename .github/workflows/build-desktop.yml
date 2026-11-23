@@ -1,0 +1,60 @@
+name: Build Desktop (Windows & Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            script: build:win
+          - os: ubuntu-latest
+            platform: linux
+            script: build:linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependências (backend, frontend, desktop)
+        run: |
+          npm install --prefix backend
+          npm install --prefix frontend
+          npm install --prefix desktop
+
+      - name: Gerar executável (${{ matrix.platform }})
+        run: npm run ${{ matrix.script }} --prefix desktop
+
+      - name: Publicar artefatos da execução
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMoney-${{ matrix.platform }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Anexar executáveis na Release (quando disparado por tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage

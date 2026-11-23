@@ -1,4 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import {
   serializerCompiler,
@@ -19,6 +22,7 @@ import { errorHandler, notFoundHandler } from './shared/error-handler.js';
 
 export interface BuildAppOptions {
   db?: DB;
+  staticDir?: string;
 }
 
 const allowedOrigins = new Set(
@@ -57,6 +61,21 @@ export function buildApp(options: BuildAppOptions = {}) {
   app.register(recurringRoutes, { prefix: '/recurring', db });
   app.register(dashboardRoutes, { prefix: '/dashboard', db });
   app.register(systemRoutes, { prefix: '/system', db });
+
+  const resolvedStaticDir = options.staticDir ?? env.STATIC_DIR;
+  if (resolvedStaticDir && fs.existsSync(path.join(resolvedStaticDir, 'index.html'))) {
+    app.register(fastifyStatic, {
+      root: path.resolve(resolvedStaticDir),
+      prefix: '/',
+    });
+
+    app.setNotFoundHandler((request, reply) => {
+      if (request.method === 'GET' && !request.url.startsWith('/api')) {
+        return reply.sendFile('index.html');
+      }
+      return notFoundHandler(request, reply);
+    });
+  }
 
   return app;
 }

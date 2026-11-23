@@ -13,8 +13,11 @@ import { createCreditCard, createTransaction } from '../services/api';
 import type { Account, Category, CreditCard } from '../types';
 import {
   centsToInput,
+  computeInvoicePeriodForPurchase,
   formatAccountTypeLabel,
   formatCurrency,
+  formatIsoDate,
+  formatMonthLabel,
   getTodayIsoDate,
 } from '../utils/formatters';
 
@@ -478,6 +481,27 @@ export function TransactionModal({
             </div>
           </div>
 
+          {/* Preview automático da fatura onde a compra no cartão vai entrar */}
+          {activeTab === 'card' &&
+            (() => {
+              const selectedCardObj = cards.find((c) => c.id === effectiveCardId);
+              if (!selectedCardObj || !date) return null;
+              const preview = computeInvoicePeriodForPurchase(
+                date,
+                selectedCardObj.closingDay,
+                selectedCardObj.dueDay,
+              );
+              if (!preview) return null;
+              return (
+                <div className="rounded-lg border border-sky-200/80 bg-sky-50/70 px-3 py-2 text-xs text-sky-900">
+                  {isInstallment && !isRecurring ? 'A 1ª parcela entrará' : 'Esta compra entrará'}{' '}
+                  na fatura de{' '}
+                  <strong>{formatMonthLabel(preview.dueMonth, 'long')}</strong> (vencimento em{' '}
+                  <strong>{formatIsoDate(preview.dueDate)}</strong>).
+                </div>
+              );
+            })()}
+
           {/* Categoria e Conta / Cartão / Transferência */}
           {activeTab === 'transfer' ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -798,10 +822,8 @@ export function TransactionModal({
                         <button
                           type="button"
                           onClick={() => {
+                            // Mantém o amountCents exato sem perder centavos de resto ao apenas alternar o modo
                             setInstallmentMode('total');
-                            if (installmentAmountCents > 0) {
-                              setAmountCents(installmentAmountCents * installments);
-                            }
                           }}
                           className={`rounded-md py-1.5 px-2 font-medium transition ${
                             installmentMode === 'total'

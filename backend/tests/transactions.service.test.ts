@@ -19,16 +19,16 @@ import { BusinessRuleError, NotFoundError } from '../src/shared/errors.js';
 // Funções puras
 // ---------------------------------------------------------------------------
 describe('resolveInvoicePeriod', () => {
-  it('compra NO dia do fechamento fica na competência atual', () => {
-    expect(resolveInvoicePeriod('2026-11-10', 10, 17)).toEqual({
+  it('compra ANTES do fechamento fica na competência atual', () => {
+    expect(resolveInvoicePeriod('2026-11-09', 10, 17)).toEqual({
       month: '2026-11',
       closingDate: '2026-11-10',
       dueDate: '2026-11-17',
     });
   });
 
-  it('compra no dia SEGUINTE ao fechamento vai para a competência do mês seguinte', () => {
-    expect(resolveInvoicePeriod('2026-11-11', 10, 17)).toEqual({
+  it('compra NO dia do fechamento (melhor dia) vai para a competência do mês seguinte', () => {
+    expect(resolveInvoicePeriod('2026-11-10', 10, 17)).toEqual({
       month: '2026-12',
       closingDate: '2026-12-10',
       dueDate: '2026-12-17',
@@ -48,10 +48,15 @@ describe('resolveInvoicePeriod', () => {
   });
 
   it('limita closing_day ao último dia de meses curtos', () => {
-    expect(resolveInvoicePeriod('2027-02-28', 31, 10)).toEqual({
+    expect(resolveInvoicePeriod('2027-02-27', 31, 10)).toEqual({
       month: '2027-02',
       closingDate: '2027-02-28',
       dueDate: '2027-03-10',
+    });
+    expect(resolveInvoicePeriod('2027-02-28', 31, 10)).toEqual({
+      month: '2027-03',
+      closingDate: '2027-03-31',
+      dueDate: '2027-04-10',
     });
     expect(invoicePeriodForMonth('2028-02', 30, 31).closingDate).toBe('2028-02-29');
   });
@@ -116,22 +121,22 @@ describe('TransactionsService', () => {
     db.select().from(invoices).where(eq(invoices.id, invoiceId!)).get()?.month;
 
   describe('createCardPurchase', () => {
-    it('compra no dia do fechamento vs. dia seguinte cai em faturas diferentes', () => {
+    it('compra antes do fechamento vs. no dia do fechamento cai em faturas diferentes', () => {
+      const [beforeClosing] = service.createCardPurchase({
+        description: 'Antes do fechamento',
+        amountCents: 5000,
+        date: '2026-11-09',
+        cardId,
+      });
       const [onClosing] = service.createCardPurchase({
         description: 'No fechamento',
         amountCents: 5000,
         date: '2026-11-10',
         cardId,
       });
-      const [afterClosing] = service.createCardPurchase({
-        description: 'Dia seguinte',
-        amountCents: 5000,
-        date: '2026-11-11',
-        cardId,
-      });
 
-      expect(invoiceMonthOf(onClosing!.invoiceId)).toBe('2026-11');
-      expect(invoiceMonthOf(afterClosing!.invoiceId)).toBe('2026-12');
+      expect(invoiceMonthOf(beforeClosing!.invoiceId)).toBe('2026-11');
+      expect(invoiceMonthOf(onClosing!.invoiceId)).toBe('2026-12');
     });
 
     it('cria a fatura automaticamente com status OPEN e reaproveita a existente', () => {
@@ -288,6 +293,31 @@ describe('TransactionsService', () => {
       expect(updated2.date.endsWith('-20')).toBe(true);
       expect(updated3.amountCents).toBe(35000);
       expect(updated3.date.endsWith('-20')).toBe(true);
+    });
+
+    it('editar apenas descrição de parcela com resto (100/3) preserva os centavos exatos das irmãs', () => {
+      const installments = service.createCardPurchase({
+        description: 'Tênis',
+        amountCents: 10000,
+        date: '2026-10-15',
+        cardId,
+        isInstallment: true,
+        installments: 3,
+      });
+
+      expect(installments.map((i) => i.amountCents)).toEqual([3334, 3333, 3333]);
+
+      // Edita descrição da 1ª parcela enviando o mesmo valor atual (3334)
+      service.update(installments[0]!.id, {
+        description: 'Tênis Corrida',
+        amountCents: 3334,
+        date: '2026-10-15',
+      });
+
+      const after = installments.map((orig) => service.list().find((t) => t.id === orig.id)!);
+      expect(after.map((t) => t.description)).toEqual(['Tênis Corrida', 'Tênis Corrida', 'Tênis Corrida']);
+      expect(after.map((t) => t.amountCents)).toEqual([3334, 3333, 3333]);
+      expect(after.reduce((acc, t) => acc + t.amountCents, 0)).toBe(10000);
     });
   });
 });

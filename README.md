@@ -182,4 +182,32 @@ Na raiz do projeto (`/home/joaoferigoti/Projetos/MyMoney`):
 | `npm run db:studio` | Abre o **Drizzle Studio** no navegador para visualizar e editar o banco SQLite. |
 | `npm run build` | Compila o TypeScript do Backend e gera o bundle de produção do Frontend. |
 | `npm test` | Executa a suíte de testes de integração e unidade do Backend (Vitest). |
+| `npm run desktop:start` | Compila e abre o aplicativo Desktop (Electron) localmente para testes. |
+| `npm run desktop:build:linux` | Gera o executável `MyMoney-*.AppImage` em `desktop/dist/`. |
+| `npm run desktop:build:win` | Gera o instalador e a versão portátil `.exe` em `desktop/dist/` (rodar em Windows ou via GitHub Actions). |
+
+---
+
+## 7. Gerar Executável Desktop (`.exe` / `.AppImage`) para Distribuir
+
+O projeto conta com empacotamento **Electron** em `desktop/`, que embute o Backend (Fastify + SQLite) e o Frontend em um único executável — quem recebe **não precisa instalar Node.js nem abrir terminal**. O banco de dados é salvo automaticamente na pasta do usuário (`%APPDATA%\MyMoney\finance.db` no Windows ou `~/.config/MyMoney/finance.db` no Linux).
+
+### Gerar localmente no Linux
+```bash
+npm install --prefix desktop
+npm run desktop:build:linux
+```
+O executável ficará em `desktop/dist/MyMoney-1.0.0-x86_64.AppImage`.
+
+### Gerar o `.exe` para Windows automaticamente (via GitHub Actions)
+Como `better-sqlite3` é um módulo nativo, o jeito mais fácil de gerar o `.exe` de Windows a partir do Linux é usando o workflow pronto em [`.github/workflows/build-desktop.yml`](.github/workflows/build-desktop.yml):
+
+1. Suba o repositório para o GitHub.
+2. Acesse a aba **Actions → Build Desktop (Windows & Linux) → Run workflow** (ou crie uma tag como `git tag v1.0.0 && git push origin v1.0.0`).
+3. Em ~3 minutos serão gerados:
+   - `MyMoney-1.0.0-x64-nsis.exe` (**Instalador Windows** com atalho na Área de Trabalho)
+   - `MyMoney-1.0.0-x64-portable.exe` (**Versão portátil**, só clicar e abrir)
+   - `MyMoney-1.0.0-x86_64.AppImage` (**Linux**)
+
+> **Aviso do Windows SmartScreen:** na primeira abertura, o Windows pode exibir *"O Windows protegeu o computador"* (comum em apps sem certificado digital pago). Basta clicar em **"Mais informações" → "Executar assim mesmo"**.
 

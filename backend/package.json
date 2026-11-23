@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",
+    "@fastify/static": "^10.1.12",
     "@feriados/brasil": "file:../packages/feriados-brasil",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.4",

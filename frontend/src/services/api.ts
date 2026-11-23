@@ -17,7 +17,10 @@ import type {
 } from '../types';
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL?.toString().trim() || 'http://localhost:3333';
+  import.meta.env.VITE_API_URL?.toString().trim() ||
+  (import.meta.env.PROD && typeof window !== 'undefined'
+    ? window.location.origin
+    : 'http://localhost:3333');
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -31,9 +34,25 @@ export const api = axios.create({
 // Chamadas tipadas da API
 // ---------------------------------------------------------------------------
 
-export async function fetchDashboardSummary(month: string): Promise<DashboardSummary> {
+export interface DashboardSummaryOptions {
+  historyMonths?: number;
+  historyStart?: string;
+  historyEnd?: string;
+}
+
+export async function fetchDashboardSummary(
+  month: string,
+  options?: DashboardSummaryOptions,
+): Promise<DashboardSummary> {
   const { data } = await api.get<ApiResponse<DashboardSummary>>('/dashboard/summary', {
-    params: { month },
+    params: {
+      month,
+      ...(options?.historyStart && options?.historyEnd
+        ? { historyStart: options.historyStart, historyEnd: options.historyEnd }
+        : options?.historyMonths !== undefined
+          ? { historyMonths: options.historyMonths }
+          : {}),
+    },
   });
   return data.data;
 }

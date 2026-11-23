@@ -47,7 +47,7 @@ export function materializeRecurringForMonth(db: DbOrTx, month: string): Transac
       const invoice = findOrCreateInvoice(db, { cardId: card.id, ...period });
       if (invoice.status === 'PAID') continue;
 
-      const chargeMonth = rule.dueDay > card.closingDay ? addMonths(month, -1) : month;
+      const chargeMonth = rule.dueDay >= card.closingDay ? addMonths(month, -1) : month;
       const cardChargeDate = resolveRecurringDateForMonth(
         chargeMonth,
         rule.scheduleRule,

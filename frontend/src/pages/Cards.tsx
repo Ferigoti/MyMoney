@@ -39,6 +39,8 @@ import type {
 } from '../types';
 import {
   centsToInput,
+  computeExpectedInvoiceForDueMonth,
+  computeInvoiceBillingWindow,
   formatCurrency,
   formatIsoDate,
   formatMonthLabel,
@@ -74,20 +76,50 @@ function extractApiErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Ocorreu um erro inesperado.';
 }
 
-function renderStatusBadge(status: InvoiceStatus) {
-  switch (status) {
+type DisplayInvoiceStatus = 'PAID' | 'OVERDUE' | 'CLOSED' | 'OPEN' | 'FUTURE';
+
+function resolveDisplayInvoiceStatus(
+  status: InvoiceStatus,
+  closingDate: string,
+  dueDate: string,
+  startDate: string,
+  todayIso: string,
+): DisplayInvoiceStatus {
+  if (status === 'PAID') return 'PAID';
+  if (todayIso > dueDate) return 'OVERDUE';
+  if (status === 'CLOSED' || todayIso >= closingDate) return 'CLOSED';
+  if (todayIso < startDate) return 'FUTURE';
+  return 'OPEN';
+}
+
+function renderStatusBadge(displayStatus: DisplayInvoiceStatus) {
+  switch (displayStatus) {
     case 'PAID':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          PAID (Paga)
+          Paga
+        </span>
+      );
+    case 'OVERDUE':
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Vencida
         </span>
       );
     case 'CLOSED':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
           <Lock className="h-3.5 w-3.5" />
-          CLOSED (Fechada)
+          Fechada
+        </span>
+      );
+    case 'FUTURE':
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+          <Calendar className="h-3.5 w-3.5" />
+          Futura
         </span>
       );
     case 'OPEN':
@@ -95,7 +127,7 @@ function renderStatusBadge(status: InvoiceStatus) {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200">
           <Clock className="h-3.5 w-3.5" />
-          OPEN (Aberta)
+          Aberta (em andamento)
         </span>
       );
   }
@@ -524,7 +556,7 @@ export function Cards({
                           isSelected ? 'text-slate-300' : 'text-slate-500'
                         }`}
                       >
-                        Fecha dia {card.closingDay} • Vence dia {card.dueDay}
+                        Fecha dia {card.closingDay} (melhor dia) • Vence dia {card.dueDay}
                       </p>
                     </div>
                     <div
@@ -629,36 +661,66 @@ export function Cards({
                   </div>
 
                   {/* Badge de Status da Fatura */}
-                  {currentInvoice ? (
-                    renderStatusBadge(currentInvoice.status)
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                      Sem fatura gerada neste mês
-                    </span>
-                  )}
+                  {(() => {
+                    const expectedDates = computeExpectedInvoiceForDueMonth(
+                      invoiceMonth,
+                      selectedCard.closingDay,
+                      selectedCard.dueDay,
+                    );
+                    const effectiveClosingDate =
+                      currentInvoice?.closingDate ?? expectedDates.closingDate;
+                    const effectiveDueDate = currentInvoice?.dueDate ?? expectedDates.dueDate;
+                    const { startDate, endDate } = currentInvoice
+                      ? computeInvoiceBillingWindow(
+                          currentInvoice.closingDate,
+                          selectedCard.closingDay,
+                        )
+                      : expectedDates;
+                    const displayStatus = currentInvoice
+                      ? resolveDisplayInvoiceStatus(
+                          currentInvoice.status,
+                          effectiveClosingDate,
+                          effectiveDueDate,
+                          startDate,
+                          getTodayIsoDate(),
+                        )
+                      : null;
 
-                  {currentInvoice && (
-                    <span className="text-xs text-slate-500">
-                      Fechamento: <strong>{formatIsoDate(currentInvoice.closingDate)}</strong> •
-                      Vencimento: <strong>{formatIsoDate(currentInvoice.dueDate)}</strong>
-                      {currentInvoice.status === 'PAID' && currentInvoice.paidAt && (
-                        <>
-                          {' '}
-                          • Paga em <strong>{formatIsoDate(currentInvoice.paidAt)}</strong>
-                          {currentInvoice.paidFromAccountId &&
-                            accountsMap.get(currentInvoice.paidFromAccountId) && (
-                              <>
-                                {' '}
-                                via{' '}
-                                <strong>
-                                  {accountsMap.get(currentInvoice.paidFromAccountId)?.name}
-                                </strong>
-                              </>
-                            )}
-                        </>
-                      )}
-                    </span>
-                  )}
+                    return (
+                      <>
+                        {displayStatus ? (
+                          renderStatusBadge(displayStatus)
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                            Sem lançamentos neste mês
+                          </span>
+                        )}
+
+                        <span className="text-xs text-slate-500">
+                          Compras de <strong>{formatIsoDate(startDate)}</strong> a{' '}
+                          <strong>{formatIsoDate(endDate)}</strong> • Fecha em{' '}
+                          <strong>{formatIsoDate(effectiveClosingDate)}</strong> • Vence em{' '}
+                          <strong>{formatIsoDate(effectiveDueDate)}</strong>
+                          {currentInvoice?.status === 'PAID' && currentInvoice.paidAt && (
+                            <>
+                              {' '}
+                              • Paga em <strong>{formatIsoDate(currentInvoice.paidAt)}</strong>
+                              {currentInvoice.paidFromAccountId &&
+                                accountsMap.get(currentInvoice.paidFromAccountId) && (
+                                  <>
+                                    {' '}
+                                    via{' '}
+                                    <strong>
+                                      {accountsMap.get(currentInvoice.paidFromAccountId)?.name}
+                                    </strong>
+                                  </>
+                                )}
+                            </>
+                          )}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {/* Valor Total Consolidado da Fatura + Ação Pagar Fatura */}

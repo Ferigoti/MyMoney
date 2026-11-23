@@ -44,6 +44,7 @@ import {
   fetchDashboardSummary,
   fetchTransactions,
   toggleTransactionPaid,
+  type DashboardSummaryOptions,
 } from '../services/api';
 import type {
   Account,
@@ -86,12 +87,43 @@ const DONUT_COLORS_DARK = [
   '#38bdf8', // sky-400
 ];
 
+type HistoryPreset = '3m' | '6m' | '12m' | 'next6m' | 'custom';
+
+function buildHistoryOptions(
+  month: string,
+  preset: HistoryPreset,
+  customStart: string,
+  customEnd: string,
+): DashboardSummaryOptions {
+  switch (preset) {
+    case '3m':
+      return { historyMonths: 3 };
+    case '12m':
+      return { historyMonths: 12 };
+    case 'next6m':
+      return { historyStart: month, historyEnd: shiftYearMonth(month, 5) };
+    case 'custom':
+      if (customStart && customEnd && customStart <= customEnd) {
+        return { historyStart: customStart, historyEnd: customEnd };
+      }
+      return { historyMonths: 6 };
+    case '6m':
+    default:
+      return { historyMonths: 6 };
+  }
+}
+
 export function Dashboard() {
   const [activeView, setActiveView] = useState<
     'overview' | 'transactions' | 'cards' | 'budgets' | 'settings'
   >('overview');
   const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getCurrentYearMonth());
+  const [historyPreset, setHistoryPreset] = useState<HistoryPreset>('6m');
+  const [customHistoryStart, setCustomHistoryStart] = useState<string>(() =>
+    shiftYearMonth(getCurrentYearMonth(), -5),
+  );
+  const [customHistoryEnd, setCustomHistoryEnd] = useState<string>(() => getCurrentYearMonth());
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [nextMonthTransactions, setNextMonthTransactions] = useState<Transaction[]>([]);
@@ -118,21 +150,29 @@ export function Dashboard() {
     applyTheme(nextTheme);
   };
 
-  const fetchAllForMonth = useCallback(async (month: string) => {
-    // Busca primeiro as transações do mês e do próximo mês para materializar recorrências e assinaturas futuras
-    const nextMonth = shiftYearMonth(month, 1);
-    const [txList, nextTxList] = await Promise.all([
-      fetchTransactions({ month }),
-      fetchTransactions({ month: nextMonth }),
-    ]);
-    const [summaryData, catList, accList, cardList] = await Promise.all([
-      fetchDashboardSummary(month),
-      fetchCategories(),
-      fetchAccounts(),
-      fetchCards(),
-    ]);
-    return { summaryData, txList, nextTxList, catList, accList, cardList };
-  }, []);
+  const historyOptions = useMemo(
+    () => buildHistoryOptions(selectedMonth, historyPreset, customHistoryStart, customHistoryEnd),
+    [selectedMonth, historyPreset, customHistoryStart, customHistoryEnd],
+  );
+
+  const fetchAllForMonth = useCallback(
+    async (month: string, opts?: DashboardSummaryOptions) => {
+      // Busca primeiro as transações do mês e do próximo mês para materializar recorrências e assinaturas futuras
+      const nextMonth = shiftYearMonth(month, 1);
+      const [txList, nextTxList] = await Promise.all([
+        fetchTransactions({ month }),
+        fetchTransactions({ month: nextMonth }),
+      ]);
+      const [summaryData, catList, accList, cardList] = await Promise.all([
+        fetchDashboardSummary(month, opts),
+        fetchCategories(),
+        fetchAccounts(),
+        fetchCards(),
+      ]);
+      return { summaryData, txList, nextTxList, catList, accList, cardList };
+    },
+    [],
+  );
 
   const loadDashboardData = useCallback(
     async (month: string) => {
@@ -140,7 +180,7 @@ export function Dashboard() {
       setError(null);
       try {
         const { summaryData, txList, nextTxList, catList, accList, cardList } =
-          await fetchAllForMonth(month);
+          await fetchAllForMonth(month, historyOptions);
         setSummary(summaryData);
         setTransactions(txList);
         setNextMonthTransactions(nextTxList);
@@ -157,13 +197,13 @@ export function Dashboard() {
         setLoading(false);
       }
     },
-    [fetchAllForMonth],
+    [fetchAllForMonth, historyOptions],
   );
 
   useEffect(() => {
     let cancelled = false;
 
-    fetchAllForMonth(selectedMonth)
+    fetchAllForMonth(selectedMonth, historyOptions)
       .then(({ summaryData, txList, nextTxList, catList, accList, cardList }) => {
         if (cancelled) return;
         setSummary(summaryData);
@@ -189,7 +229,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth, fetchAllForMonth]);
+  }, [selectedMonth, historyOptions, fetchAllForMonth]);
 
   const changeMonth = (nextMonth: string) => {
     if (!nextMonth || nextMonth === selectedMonth) return;
@@ -738,18 +778,87 @@ export function Dashboard() {
                 )}
               </div>
 
-              {/* Gráfico de Barras: Histórico de 6 Meses */}
+              {/* Gráfico de Barras: Evolução Mensal (com filtro de período) */}
               <div className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-2xs sm:p-5 lg:col-span-7">
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-900">
-                      Evolução nos Últimos 6 Meses
+                      {historyPreset === '3m'
+                        ? 'Evolução nos Últimos 3 Meses'
+                        : historyPreset === '12m'
+                          ? 'Evolução nos Últimos 12 Meses'
+                          : historyPreset === 'next6m'
+                            ? 'Projeção dos Próximos 6 Meses'
+                            : historyPreset === 'custom' &&
+                                customHistoryStart &&
+                                customHistoryEnd &&
+                                customHistoryStart <= customHistoryEnd
+                              ? `Evolução: ${formatMonthLabel(customHistoryStart, 'short')} a ${formatMonthLabel(customHistoryEnd, 'short')}`
+                              : 'Evolução nos Últimos 6 Meses'}
                     </h2>
                     <p className="text-xs text-slate-500">
                       Comparativo mensal de Receitas vs Despesas
                     </p>
                   </div>
+
+                  {/* Filtro de período do gráfico */}
+                  <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px] font-medium">
+                    {(
+                      [
+                        { id: '3m', label: '3M' },
+                        { id: '6m', label: '6M' },
+                        { id: '12m', label: '12M' },
+                        { id: 'next6m', label: 'Próx. 6M' },
+                        { id: 'custom', label: 'Período' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setHistoryPreset(opt.id)}
+                        className={`rounded-md px-2 py-1 transition ${
+                          historyPreset === opt.id
+                            ? 'bg-white font-semibold text-slate-900 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {historyPreset === 'custom' && (
+                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    <label htmlFor="history-start-month" className="font-medium">
+                      De:
+                    </label>
+                    <input
+                      id="history-start-month"
+                      type="month"
+                      value={customHistoryStart}
+                      max={customHistoryEnd || undefined}
+                      onChange={(e) => setCustomHistoryStart(e.target.value)}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-900 focus:border-slate-900 focus:outline-none"
+                    />
+                    <label htmlFor="history-end-month" className="font-medium">
+                      Até:
+                    </label>
+                    <input
+                      id="history-end-month"
+                      type="month"
+                      value={customHistoryEnd}
+                      min={customHistoryStart || undefined}
+                      onChange={(e) => setCustomHistoryEnd(e.target.value)}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-900 focus:border-slate-900 focus:outline-none"
+                    />
+                    {customHistoryStart > customHistoryEnd && (
+                      <span className="text-[11px] font-medium text-rose-600">
+                        Mês final deve ser maior ou igual ao inicial.
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div className="h-60 w-full flex-1 sm:h-64">
                   <ResponsiveContainer width="100%" height="100%">

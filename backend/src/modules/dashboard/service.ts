@@ -11,6 +11,7 @@ import {
 import {
   dashboardPlanningQuerySchema,
   dashboardSummaryQuerySchema,
+  MAX_HISTORY_MONTHS,
   type DashboardPlanning,
   type DashboardPlanningQuery,
   type DashboardSummary,
@@ -71,10 +72,38 @@ const SUMMABLE_KEYS = [
 export function createDashboardService(db: DB) {
   return {
     getSummary(rawQuery: DashboardSummaryQuery): DashboardSummary {
-      const { month } = dashboardSummaryQuerySchema.parse(rawQuery);
+      const { month, historyMonths, historyStart, historyEnd } =
+        dashboardSummaryQuerySchema.parse(rawQuery);
+
+      // Monta a janela de meses do gráfico de evolução:
+      // - Período personalizado (historyStart..historyEnd, limitado a MAX_HISTORY_MONTHS)
+      // - Ou últimos N meses terminando em `month` (padrão: 6)
+      let monthsWindow: string[];
+      if (historyStart && historyEnd) {
+        const list: string[] = [];
+        let cursor = historyStart;
+        while (cursor <= historyEnd && list.length < MAX_HISTORY_MONTHS) {
+          list.push(cursor);
+          cursor = addMonths(cursor, 1);
+        }
+        monthsWindow = list.length > 0 ? list : [month];
+      } else {
+        const count = historyMonths ?? 6;
+        monthsWindow = Array.from({ length: count }, (_, i) => addMonths(month, i - (count - 1)));
+      }
+
       db.transaction((tx) => {
-        materializeRecurringForMonth(tx, addMonths(month, -1));
-        materializeRecurringForMonth(tx, month);
+        const toMaterialize = new Set<string>([addMonths(month, -1), month]);
+        // Se o filtro do gráfico inclui meses futuros além do mês selecionado, materializa recorrências
+        for (const m of monthsWindow) {
+          if (m > month) {
+            toMaterialize.add(addMonths(m, -1));
+            toMaterialize.add(m);
+          }
+        }
+        for (const m of [...toMaterialize].sort()) {
+          materializeRecurringForMonth(tx, m);
+        }
       });
       const monthEndDate = lastDayOfMonthIso(month);
 
@@ -118,10 +147,10 @@ export function createDashboardService(db: DB) {
         };
       });
 
-      // 4) Six Months History (de month - 5 até month, sempre com 6 posições ordenadas)
-      const monthsWindow = Array.from({ length: 6 }, (_, i) => addMonths(month, i - 5));
+      // 4) History Window (período configurável para o gráfico de evolução)
       const startMonth = monthsWindow[0]!;
-      const historyMap = queryHistoryByMonthRange(db, startMonth, month);
+      const endMonth = monthsWindow[monthsWindow.length - 1]!;
+      const historyMap = queryHistoryByMonthRange(db, startMonth, endMonth);
       const sixMonthsHistory = monthsWindow.map((m) => {
         const found = historyMap.get(m);
         return {

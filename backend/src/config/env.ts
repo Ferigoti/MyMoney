@@ -5,9 +5,10 @@ import { DEFAULT_DATABASE_PATH, PROJECT_ROOT } from './paths.js';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   HOST: z.string().default('127.0.0.1'),
-  PORT: z.coerce.number().int().positive().default(3333),
+  PORT: z.coerce.number().int().min(0).default(3333),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:5173,http://127.0.0.1:5173'),
+  STATIC_DIR: z.string().optional(),
   DATABASE_PATH: z
     .string()
     .default(DEFAULT_DATABASE_PATH)
