@@ -26,21 +26,28 @@ jobs:
 
     steps:
       - name: Baixar código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
-      - name: Instalar dependências (backend, frontend, desktop)
-        run: |
-          npm install --prefix backend
-          npm install --prefix frontend
-          npm install --prefix desktop
+      - name: Instalar dependências do backend
+        working-directory: backend
+        run: npm install
+
+      - name: Instalar dependências do frontend
+        working-directory: frontend
+        run: npm install
+
+      - name: Instalar dependências do desktop
+        working-directory: desktop
+        run: npm install
 
       - name: Gerar executável (${{ matrix.platform }})
-        run: npm run ${{ matrix.script }} --prefix desktop
+        working-directory: desktop
+        run: npm run ${{ matrix.script }}
 
       - name: Publicar artefatos da execução
         uses: actions/upload-artifact@v4

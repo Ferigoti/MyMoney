@@ -11,11 +11,20 @@ const backendDir = path.join(repoRoot, 'backend');
 const frontendDir = path.join(repoRoot, 'frontend');
 const targetAppDir = path.join(desktopRoot, 'app');
 
+// Remove variáveis herdadas de `npm run ... --prefix desktop` para não confundir
+// o npm filho ao compilar backend/ e frontend/ no Windows.
+const cleanEnv = { ...process.env };
+for (const key of Object.keys(cleanEnv)) {
+  if (key.toLowerCase() === 'npm_config_prefix' || key === 'INIT_CWD') {
+    delete cleanEnv[key];
+  }
+}
+
 console.log('[desktop:prepare] Compilando backend...');
-execSync('npm run build', { cwd: backendDir, stdio: 'inherit' });
+execSync('npm run build', { cwd: backendDir, env: cleanEnv, stdio: 'inherit' });
 
 console.log('[desktop:prepare] Compilando frontend...');
-execSync('npm run build', { cwd: frontendDir, stdio: 'inherit' });
+execSync('npm run build', { cwd: frontendDir, env: cleanEnv, stdio: 'inherit' });
 
 console.log('[desktop:prepare] Copiando artefatos para desktop/app...');
 fs.rmSync(targetAppDir, { recursive: true, force: true });
