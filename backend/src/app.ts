@@ -44,7 +44,6 @@ export function buildApp(options: BuildAppOptions = {}) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.setErrorHandler(errorHandler);
-  app.setNotFoundHandler(notFoundHandler);
 
   app.register(cors, {
     origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
@@ -63,9 +62,12 @@ export function buildApp(options: BuildAppOptions = {}) {
   app.register(systemRoutes, { prefix: '/system', db });
 
   const resolvedStaticDir = options.staticDir ?? env.STATIC_DIR;
-  if (resolvedStaticDir && fs.existsSync(path.join(resolvedStaticDir, 'index.html'))) {
+  const hasStaticDir =
+    Boolean(resolvedStaticDir) && fs.existsSync(path.join(resolvedStaticDir!, 'index.html'));
+
+  if (hasStaticDir) {
     app.register(fastifyStatic, {
-      root: path.resolve(resolvedStaticDir),
+      root: path.resolve(resolvedStaticDir!),
       prefix: '/',
     });
 
@@ -75,6 +77,8 @@ export function buildApp(options: BuildAppOptions = {}) {
       }
       return notFoundHandler(request, reply);
     });
+  } else {
+    app.setNotFoundHandler(notFoundHandler);
   }
 
   return app;
