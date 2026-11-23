@@ -2,15 +2,16 @@
   "name": "mymoney-desktop",
   "version": "1.0.0",
   "private": true,
+  "author": "MyMoney",
   "description": "MyMoney — Aplicativo Desktop de Gestão Financeira Pessoal",
   "type": "module",
   "main": "main.mjs",
   "scripts": {
     "prepare:app": "node scripts/prepare.mjs",
     "start": "npm run prepare:app && electron .",
-    "build:linux": "npm run prepare:app && electron-builder --linux",
-    "build:win": "npm run prepare:app && electron-builder --win",
-    "build:dir": "npm run prepare:app && electron-builder --dir"
+    "build:linux": "npm run prepare:app && electron-builder --linux --publish never",
+    "build:win": "npm run prepare:app && electron-builder --win --publish never",
+    "build:dir": "npm run prepare:app && electron-builder --dir --publish never"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",
@@ -65,8 +66,7 @@
             "x64"
           ]
         }
-      ],
-      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -77,7 +77,11 @@
       "installerLanguages": [
         "pt_BR"
       ],
-      "language": "1046"
+      "language": "1046",
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [
